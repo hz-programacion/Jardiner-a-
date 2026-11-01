@@ -1,0 +1,6 @@
+{
+  "name": "PastoPro — Gestión de Rutas, Agenda y Facturación para Corte de Pasto",
+  "description": "Plataforma integral 2026 para profesionales del corte de pasto y mantenimiento de terrenos: agenda con calendario diario/semanal/mensual, ubicación base GPS dinámica, rutas optimizadas en Google Maps, cotizador y sincronización con Google Sheets.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
