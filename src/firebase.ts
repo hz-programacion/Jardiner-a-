@@ -32,6 +32,7 @@ import {
   OperationalExpense,
   PaymentProfileConfig,
   ScheduledJob,
+  TenantSubscriptionConfig,
 } from './types/lawn';
 
 // Your web app's Firebase configuration
@@ -153,6 +154,7 @@ export interface CloudWorkspacePayload {
   businessProfile: BusinessProfileConfig;
   baseLocation: BaseLocationConfig;
   paymentProfile: PaymentProfileConfig;
+  subscription?: TenantSubscriptionConfig;
   properties: ClientProperty[];
   todayJobs: ScheduledJob[];
   invoices: InvoiceRecord[];

@@ -114,6 +114,8 @@ export interface PaymentProfileConfig {
   cbu: string;
   holderName: string;
   bankName: string;
+  cuit?: string;
+  mpPaymentLink?: string;
 }
 
 export interface BusinessProfileConfig {
@@ -123,6 +125,46 @@ export interface BusinessProfileConfig {
   ownerPhone: string;
   baseRatePerSqm: number;
   minServicePrice: number;
+  tallGrassSurchargePct?: number;
+  baggingSurchargePct?: number;
+  logoUrl?: string;
+  brandColor?: string;
+  onboardingCompleted?: boolean;
+}
+
+export type SubscriptionPlanId =
+  | 'trial'
+  | 'pro_monthly'
+  | 'pro_annual'
+  | 'installed_license';
+
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'expired';
+
+export interface SubscriptionPaymentRecord {
+  id: string;
+  date: string;
+  planId: SubscriptionPlanId;
+  planLabel: string;
+  amountArs: number;
+  method: 'Mercado Pago Suscripción' | 'Transferencia / Licencia' | 'Bonificado';
+  referenceCode: string;
+  status: 'Aprobado' | 'Pendiente';
+}
+
+export interface TenantSubscriptionConfig {
+  planId: SubscriptionPlanId;
+  status: SubscriptionStatus;
+  trialStartedAt: string;
+  trialEndsAt: string;
+  currentPeriodEndsAt?: string;
+  mpPreapprovalPlanId?: string;
+  mpCheckoutUrl?: string;
+  sellerWhatsapp?: string;
+  monthlyPriceArs: number;
+  annualPriceArs: number;
+  installedLicensePriceArs: number;
+  licenseKey?: string;
+  paymentHistory: SubscriptionPaymentRecord[];
 }
 
 export interface WeatherForecastDay {
@@ -242,6 +284,7 @@ export interface BackupPayload {
   businessProfile?: BusinessProfileConfig;
   baseLocation?: BaseLocationConfig;
   paymentProfile?: PaymentProfileConfig;
+  subscription?: TenantSubscriptionConfig;
   properties: ClientProperty[];
   todayJobs: ScheduledJob[];
   invoices: InvoiceRecord[];

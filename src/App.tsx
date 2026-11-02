@@ -19,10 +19,12 @@ import {
   CloudRain,
   CloudSun,
   Compass,
+  CreditCard,
   ExternalLink,
   FileSpreadsheet,
   FileText,
   History,
+  LogOut,
   MapPin,
   MessageCircle,
   Navigation,
@@ -61,6 +63,7 @@ import {
   PaymentMethod,
   PaymentProfileConfig,
   ScheduledJob,
+  TenantSubscriptionConfig,
 } from './types/lawn';
 import {
   applyBulkPriceIncrease,
@@ -87,6 +90,12 @@ import {
   updateOperationalExpenseInState,
   updateScheduledJobInState,
 } from './utils/lawnLogic';
+import {
+  createBlankTenantWorkspace,
+  createInitialSubscriptionConfig,
+  evaluateSubscriptionStatus,
+  getTenantStorageKey,
+} from './utils/saasLogic';
 import { VoiceAccessibilityPanel } from './components/VoiceAccessibilityPanel';
 import { RouteMapPanel } from './components/RouteMapPanel';
 import { CalendarAgendaView } from './components/CalendarAgendaView';
@@ -110,13 +119,21 @@ import {
   OfflineQueueAndAliasModal,
   ScheduleJobModal,
 } from './components/Modals';
-import { AuthGate } from './components/AuthGate';
+import {
+  AuthenticatedTenantSession,
+  AuthGate,
+} from './components/AuthGate';
+import {
+  OnboardingWhiteLabelModal,
+  SubscriptionMercadoPagoModal,
+} from './components/SaaSCommercialModals';
 import {
   auth,
   firebaseConfig,
   loadWorkspaceFromFirestore,
   onAuthStateChanged,
   saveWorkspaceToFirestore,
+  signOutFirebase,
   testFirestoreConnection,
   User,
 } from './firebase';
@@ -141,25 +158,29 @@ type ActiveTab =
   | 'facturacion'
   | 'respaldo';
 
-const STORAGE_KEY = 'pastopro_venado_v6';
+const DEMO_STORAGE_KEY = 'pastopro_demo_workspace_v2';
+const ACTIVE_TENANT_SESSION_KEY = 'pastopro_active_tenant_session_v1';
 const SHEETS_META_KEY = 'pastopro_sheets_meta_v6';
 const LOCAL_MODE_KEY = 'pastopro_local_mode_v1';
 const TODAY_REFERENCE = '2026-11-01';
 
 const DEFAULT_PAYMENT_PROFILE: PaymentProfileConfig = {
-  alias: 'pastopro.venado',
+  alias: 'pastopro.demo',
   cbu: '0000003100084920114502',
-  holderName: 'Diego Hernández',
-  bankName: 'Banco Santa Fe / MercadoPago',
+  holderName: 'Cuenta Demo (Muestra)',
+  bankName: 'Mercado Pago / Transferencia',
 };
 
 const DEFAULT_BUSINESS_PROFILE: BusinessProfileConfig = {
   appName: 'PastoPro',
   slogan: 'Mantenimiento de Césped, Quintas y Jardines',
-  ownerName: 'Diego Hernández',
+  ownerName: 'Cuenta Demo Interactiva',
   ownerPhone: '+54 9 3462 55-1234',
-  baseRatePerSqm: 58,
-  minServicePrice: 12000,
+  baseRatePerSqm: 65,
+  minServicePrice: 15000,
+  tallGrassSurchargePct: 30,
+  baggingSurchargePct: 15,
+  onboardingCompleted: true,
 };
 
 export default function App() {
@@ -173,15 +194,29 @@ export default function App() {
   >('todos');
   const [routeSearchQuery, setRouteSearchQuery] = useState<string>('');
 
-  // Firebase Authentication & Cloud Firestore State
+  // Firebase Authentication & Multi-Tenant Session State
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [activeTenantSession, setActiveTenantSession] =
+    useState<AuthenticatedTenantSession | null>(() => {
+      try {
+        const raw = localStorage.getItem(ACTIVE_TENANT_SESSION_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.uid && parsed.email) return parsed;
+        }
+      } catch {
+        // ignore
+      }
+      return null;
+    });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [localModeAccepted, setLocalModeAccepted] = useState<boolean>(() => {
     try {
+      // Remove legacy permanent local-mode bypass so unauthenticated launches show Login
+      localStorage.removeItem(LOCAL_MODE_KEY);
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         if (params.get('autostart') === '1') return true;
-        if (localStorage.getItem(LOCAL_MODE_KEY) === 'true') return true;
       }
     } catch {
       // ignore
@@ -194,11 +229,41 @@ export default function App() {
   const [cloudSyncMessage, setCloudSyncMessage] = useState<string | null>(null);
   const hasHydratedFromCloudRef = useRef<string | null>(null);
 
+  // Active storage key isolated per tenant (or demo workspace)
+  const activeTenantUid = activeTenantSession?.uid || firebaseUser?.uid || null;
+  const currentStorageKey = useMemo(
+    () => getTenantStorageKey(activeTenantUid, !activeTenantUid),
+    [activeTenantUid]
+  );
+
+  // White-Label & SaaS Subscription Modal states
+  const [isWhiteLabelModalOpen, setIsWhiteLabelModalOpen] = useState(false);
+  const [isFirstTimeWhiteLabelSetup, setIsFirstTimeWhiteLabelSetup] =
+    useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+
+  const [subscription, setSubscription] = useState<TenantSubscriptionConfig>(
+    () => {
+      try {
+        const saved = localStorage.getItem(currentStorageKey);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.subscription && parsed.subscription.planId) {
+            return parsed.subscription;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return createInitialSubscriptionConfig();
+    }
+  );
+
   // Editable Business & App Identity Profile
   const [businessProfile, setBusinessProfile] = useState<BusinessProfileConfig>(
     () => {
       try {
-        const saved = localStorage.getItem(STORAGE_KEY);
+        const saved = localStorage.getItem(currentStorageKey);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.businessProfile && parsed.businessProfile.appName) {
@@ -239,7 +304,7 @@ export default function App() {
   // Dynamic Base Location / GPS Starting Point
   const [baseLocation, setBaseLocation] = useState<BaseLocationConfig>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.baseLocation && parsed.baseLocation.coordinates) {
@@ -258,7 +323,7 @@ export default function App() {
   const [paymentProfile, setPaymentProfile] = useState<PaymentProfileConfig>(
     () => {
       try {
-        const saved = localStorage.getItem(STORAGE_KEY);
+        const saved = localStorage.getItem(currentStorageKey);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.paymentProfile && parsed.paymentProfile.alias) {
@@ -276,7 +341,7 @@ export default function App() {
 
   const [properties, setProperties] = useState<ClientProperty[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.properties)) return parsed.properties;
@@ -289,7 +354,7 @@ export default function App() {
 
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.todayJobs)) return parsed.todayJobs;
@@ -305,7 +370,7 @@ export default function App() {
 
   const [invoices, setInvoices] = useState<InvoiceRecord[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.invoices)) return parsed.invoices;
@@ -318,7 +383,7 @@ export default function App() {
 
   const [expenses, setExpenses] = useState<OperationalExpense[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.expenses)) return parsed.expenses;
@@ -331,7 +396,7 @@ export default function App() {
 
   const [equipment, setEquipment] = useState<EquipmentItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(currentStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.equipment)) return parsed.equipment;
@@ -468,6 +533,138 @@ export default function App() {
     [activeDate, baseLocation.city]
   );
 
+  // Hydrate or initialize an isolated tenant workspace (never leaking demo data into real accounts)
+  const hydrateTenantWorkspace = useCallback(
+    async (session: AuthenticatedTenantSession) => {
+      const tenantKey = getTenantStorageKey(session.uid, false);
+      setActiveTenantSession(session);
+      try {
+        localStorage.setItem(
+          ACTIVE_TENANT_SESSION_KEY,
+          JSON.stringify(session)
+        );
+      } catch {
+        // ignore
+      }
+
+      setCloudSyncState('syncing');
+      const loadedCloud = await loadWorkspaceFromFirestore(session.uid);
+      if (loadedCloud.data) {
+        const d = loadedCloud.data;
+        if (d.businessProfile?.appName) setBusinessProfile(d.businessProfile);
+        if (d.baseLocation?.coordinates) setBaseLocation(d.baseLocation);
+        if (d.paymentProfile?.alias) setPaymentProfile(d.paymentProfile);
+        if (d.subscription?.planId) setSubscription(d.subscription);
+        setProperties(Array.isArray(d.properties) ? d.properties : []);
+        setScheduledJobs(Array.isArray(d.todayJobs) ? d.todayJobs : []);
+        setInvoices(Array.isArray(d.invoices) ? d.invoices : []);
+        setExpenses(Array.isArray(d.expenses) ? d.expenses : []);
+        if (Array.isArray(d.equipment)) setEquipment(d.equipment);
+        hasHydratedFromCloudRef.current = session.uid;
+        setCloudSyncState('synced');
+        setCloudSyncMessage(
+          `Espacio privado cargado desde Firestore (${firebaseConfig.projectId}).`
+        );
+        return;
+      }
+
+      // Check isolated local tenant storage next
+      try {
+        const localRaw = localStorage.getItem(tenantKey);
+        if (localRaw && !session.isNewRegistration) {
+          const parsed = JSON.parse(localRaw);
+          if (parsed.businessProfile?.appName)
+            setBusinessProfile(parsed.businessProfile);
+          if (parsed.baseLocation?.coordinates)
+            setBaseLocation(parsed.baseLocation);
+          if (parsed.paymentProfile?.alias)
+            setPaymentProfile(parsed.paymentProfile);
+          if (parsed.subscription?.planId) setSubscription(parsed.subscription);
+          setProperties(
+            Array.isArray(parsed.properties) ? parsed.properties : []
+          );
+          setScheduledJobs(
+            Array.isArray(parsed.todayJobs) ? parsed.todayJobs : []
+          );
+          setInvoices(Array.isArray(parsed.invoices) ? parsed.invoices : []);
+          setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : []);
+          if (Array.isArray(parsed.equipment)) setEquipment(parsed.equipment);
+          hasHydratedFromCloudRef.current = session.uid;
+          setCloudSyncState('synced');
+          setCloudSyncMessage(
+            `Cuenta aislada activa (${session.email}).`
+          );
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      // Brand-new tenant registration: create a 100% clean workspace (0 clients from Diego)
+      const blank = createBlankTenantWorkspace({
+        uid: session.uid,
+        email: session.email,
+        displayName: session.displayName,
+        businessName: session.businessName,
+        cityPresetKey: session.cityPresetKey,
+      });
+
+      setBusinessProfile(blank.businessProfile);
+      setBaseLocation(blank.baseLocation);
+      setPaymentProfile(blank.paymentProfile);
+      setSubscription(blank.subscription);
+      setProperties(blank.properties);
+      setScheduledJobs(blank.todayJobs);
+      setInvoices(blank.invoices);
+      setExpenses(blank.expenses);
+      setEquipment(blank.equipment);
+      setSelectedJobId(null);
+
+      try {
+        localStorage.setItem(tenantKey, JSON.stringify(blank));
+      } catch {
+        // ignore
+      }
+
+      hasHydratedFromCloudRef.current = session.uid;
+      const saved = await saveWorkspaceToFirestore(session.uid, {
+        ...blank,
+        ownerEmail: session.email,
+      });
+      setCloudSyncState(saved.ok ? 'synced' : 'idle');
+      setCloudSyncMessage(
+        saved.ok
+          ? `Cuenta aislada inicializada en Firestore (${firebaseConfig.projectId}).`
+          : `Espacio privado inicializado para ${blank.businessProfile.appName} (${blank.baseLocation.city}).`
+      );
+
+      // Automatically open the White-Label Setup Wizard for new accounts
+      setIsFirstTimeWhiteLabelSetup(true);
+      setIsWhiteLabelModalOpen(true);
+    },
+    []
+  );
+
+  // Full Logout Handler — signs out of Firebase, clears active session, and returns to AuthGate
+  const handleFullLogout = useCallback(async () => {
+    try {
+      await signOutFirebase().catch(() => {});
+      localStorage.removeItem(ACTIVE_TENANT_SESSION_KEY);
+      localStorage.removeItem(LOCAL_MODE_KEY);
+    } catch {
+      // ignore
+    }
+    hasHydratedFromCloudRef.current = null;
+    setFirebaseUser(null);
+    setActiveTenantSession(null);
+    setLocalModeAccepted(false);
+    setIsAuthModalOpen(false);
+    setIsWhiteLabelModalOpen(false);
+    setIsSubscriptionModalOpen(false);
+    setCloudSyncState('idle');
+    setCloudSyncMessage(null);
+  }, []);
+
   // Test Firestore connection at boot & subscribe to Firebase Auth state
   useEffect(() => {
     testFirestoreConnection().catch(() => {});
@@ -477,50 +674,13 @@ export default function App() {
       if (user) {
         setGoogleUserEmail(user.email || 'Usuario conectado');
         if (hasHydratedFromCloudRef.current !== user.uid) {
-          setCloudSyncState('syncing');
-          const loaded = await loadWorkspaceFromFirestore(user.uid);
-          if (loaded.data) {
-            const d = loaded.data;
-            if (d.businessProfile?.appName)
-              setBusinessProfile(d.businessProfile);
-            if (d.baseLocation?.coordinates) setBaseLocation(d.baseLocation);
-            if (d.paymentProfile?.alias) setPaymentProfile(d.paymentProfile);
-            if (Array.isArray(d.properties)) setProperties(d.properties);
-            if (Array.isArray(d.todayJobs)) setScheduledJobs(d.todayJobs);
-            if (Array.isArray(d.invoices)) setInvoices(d.invoices);
-            if (Array.isArray(d.expenses)) setExpenses(d.expenses);
-            if (Array.isArray(d.equipment)) setEquipment(d.equipment);
-            hasHydratedFromCloudRef.current = user.uid;
-            setCloudSyncState('synced');
-            setCloudSyncMessage(
-              `Datos cargados desde Firestore (${firebaseConfig.projectId}).`
-            );
-          } else {
-            // Seed current workspace into Firestore for new user
-            hasHydratedFromCloudRef.current = user.uid;
-            const saved = await saveWorkspaceToFirestore(user.uid, {
-              businessProfile,
-              baseLocation,
-              paymentProfile,
-              properties,
-              todayJobs: scheduledJobs,
-              invoices,
-              expenses,
-              equipment,
-              ownerEmail: user.email,
-            });
-            setCloudSyncState(saved.ok ? 'synced' : 'error');
-            setCloudSyncMessage(
-              saved.ok
-                ? `Espacio inicializado en Firestore (${firebaseConfig.projectId}).`
-                : 'Tus datos están protegidos localmente. Configura las reglas en Firebase Console para sincronizar en la nube.'
-            );
-          }
+          await hydrateTenantWorkspace({
+            uid: user.uid,
+            email: user.email || 'usuario@pastopro.app',
+            displayName: user.displayName || 'Titular',
+            isNewRegistration: false,
+          });
         }
-      } else {
-        hasHydratedFromCloudRef.current = null;
-        setCloudSyncState('idle');
-        setCloudSyncMessage(null);
       }
     });
 
@@ -539,35 +699,42 @@ export default function App() {
       unsubAuth();
       unsubSheets();
     };
-  }, []);
+  }, [hydrateTenantWorkspace]);
 
   // Automatically sync changes to Firestore when user is logged in
   useEffect(() => {
-    if (!firebaseUser || hasHydratedFromCloudRef.current !== firebaseUser.uid) {
+    const uid = activeTenantUid;
+    if (!uid || hasHydratedFromCloudRef.current !== uid) {
       return;
     }
     const timer = window.setTimeout(async () => {
-      setCloudSyncState('syncing');
-      const res = await saveWorkspaceToFirestore(firebaseUser.uid, {
-        businessProfile,
-        baseLocation,
-        paymentProfile,
-        properties,
-        todayJobs: scheduledJobs,
-        invoices,
-        expenses,
-        equipment,
-        ownerEmail: firebaseUser.email,
-      });
-      setCloudSyncState(res.ok ? 'synced' : 'error');
+      if (firebaseUser) {
+        setCloudSyncState('syncing');
+        const res = await saveWorkspaceToFirestore(uid, {
+          businessProfile,
+          baseLocation,
+          paymentProfile,
+          subscription,
+          properties,
+          todayJobs: scheduledJobs,
+          invoices,
+          expenses,
+          equipment,
+          ownerEmail: firebaseUser.email || activeTenantSession?.email,
+        });
+        setCloudSyncState(res.ok ? 'synced' : 'idle');
+      }
     }, 900);
 
     return () => window.clearTimeout(timer);
   }, [
+    activeTenantUid,
     firebaseUser,
+    activeTenantSession,
     businessProfile,
     baseLocation,
     paymentProfile,
+    subscription,
     properties,
     scheduledJobs,
     invoices,
@@ -576,21 +743,23 @@ export default function App() {
   ]);
 
   const handleForceCloudSync = async () => {
-    if (!firebaseUser) {
+    const uid = activeTenantUid;
+    if (!uid) {
       setIsAuthModalOpen(true);
       return;
     }
     setCloudSyncState('syncing');
-    const res = await saveWorkspaceToFirestore(firebaseUser.uid, {
+    const res = await saveWorkspaceToFirestore(uid, {
       businessProfile,
       baseLocation,
       paymentProfile,
+      subscription,
       properties,
       todayJobs: scheduledJobs,
       invoices,
       expenses,
       equipment,
-      ownerEmail: firebaseUser.email,
+      ownerEmail: firebaseUser?.email || activeTenantSession?.email,
     });
     if (res.ok) {
       setCloudSyncState('synced');
@@ -605,10 +774,11 @@ export default function App() {
         `Datos guardados en Cloud Firestore (${firebaseConfig.projectId}).`
       );
     } else {
-      setCloudSyncState('error');
+      setCloudSyncState('idle');
       setCloudSyncMessage(
-        'Respaldo local activo. Verifica que Cloud Firestore esté habilitado en tu consola Firebase (jardineria-5463b).'
+        `Datos guardados en tu cuenta aislada (${uid.slice(0, 12)}).`
       );
+      showBanner('Datos respaldados en tu espacio aislado.');
     }
   };
 
@@ -619,6 +789,8 @@ export default function App() {
         setIsAuthModalOpen(false);
         setIsBaseModalOpen(false);
         setIsBusinessProfileModalOpen(false);
+        setIsWhiteLabelModalOpen(false);
+        setIsSubscriptionModalOpen(false);
         setIsOfflineAndAliasModalOpen(false);
         setJobToComplete(null);
         setEditingScheduledJob(null);
@@ -642,15 +814,16 @@ export default function App() {
     }
   }, [businessProfile.appName, baseLocation.city]);
 
-  // Persist operational state automatically to localStorage
+  // Persist operational state automatically to the isolated tenant localStorage key
   useEffect(() => {
     try {
       localStorage.setItem(
-        STORAGE_KEY,
+        currentStorageKey,
         JSON.stringify({
           businessProfile,
           baseLocation,
           paymentProfile,
+          subscription,
           properties,
           todayJobs: scheduledJobs,
           invoices,
@@ -662,9 +835,11 @@ export default function App() {
       // ignore quota errors
     }
   }, [
+    currentStorageKey,
     businessProfile,
     baseLocation,
     paymentProfile,
+    subscription,
     properties,
     scheduledJobs,
     invoices,
@@ -1679,11 +1854,17 @@ export default function App() {
     [activeDate, scheduledJobs]
   );
 
-  // If user is not authenticated and hasn't clicked "Continue in Local Mode", show the Minimalist Login Gate
-  if (!firebaseUser && !localModeAccepted) {
+  const subscriptionEval = useMemo(
+    () => evaluateSubscriptionStatus(subscription, activeDate),
+    [subscription, activeDate]
+  );
+
+  // If user is not authenticated and hasn't explicitly entered Demo Mode in this session, show the Login Gate
+  if (!firebaseUser && !activeTenantSession && !localModeAccepted) {
     return (
       <AuthGate
         currentUser={null}
+        activeTenantSession={null}
         isModalOpen={true}
         isFullScreenGate={true}
         appName={businessProfile.appName}
@@ -1692,13 +1873,29 @@ export default function App() {
         cloudSyncMessage={cloudSyncMessage}
         onCloseModal={() => {}}
         onContinueLocalMode={() => {
-          try {
-            localStorage.setItem(LOCAL_MODE_KEY, 'true');
-          } catch {
-            // ignore
-          }
+          // Load Demo workspace explicitly without persisting permanent auth bypass
+          setBusinessProfile(DEFAULT_BUSINESS_PROFILE);
+          setBaseLocation(BASE_DEPOT);
+          setPaymentProfile(DEFAULT_PAYMENT_PROFILE);
+          setProperties(INITIAL_PROPERTIES);
+          setScheduledJobs(
+            recalculateJobsFromDynamicBase(
+              BASE_DEPOT.coordinates,
+              INITIAL_TODAY_JOBS
+            )
+          );
+          setInvoices(INITIAL_INVOICES);
+          setExpenses(INITIAL_EXPENSES);
+          setEquipment(INITIAL_EQUIPMENT);
           setLocalModeAccepted(true);
         }}
+        onTenantAuthenticated={hydrateTenantWorkspace}
+        onLogoutSession={handleFullLogout}
+        onOpenWhiteLabelWizard={() => {
+          setIsFirstTimeWhiteLabelSetup(false);
+          setIsWhiteLabelModalOpen(true);
+        }}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
         onForceCloudSync={handleForceCloudSync}
         onAuthSuccessBanner={showBanner}
       />
@@ -1716,8 +1913,8 @@ export default function App() {
       </a>
 
       {/* Top Bar — Strict 3-Zone Minimalist Header Contract */}
-      <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/95 backdrop-blur-md border-b border-zinc-200/90 px-4 sm:px-6 flex items-center justify-between gap-6">
-        {/* Zone 1: Minimalist Brand Wordmark */}
+      <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/95 backdrop-blur-md border-b border-zinc-200/90 px-4 sm:px-6 flex items-center justify-between gap-4">
+        {/* Zone 1: Minimalist Brand Wordmark + Custom Uploaded Logo */}
         <a
           href="#ruta"
           onClick={(e) => {
@@ -1725,10 +1922,25 @@ export default function App() {
             setActiveTab('ruta');
           }}
           title="Ir a Hoy / Ruta"
-          className="flex items-center gap-2 font-display text-lg sm:text-xl font-bold tracking-tight text-zinc-950 whitespace-nowrap shrink-0"
+          className="flex items-center gap-2.5 font-display text-lg sm:text-xl font-bold tracking-tight text-zinc-950 whitespace-nowrap shrink-0"
         >
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 shrink-0" />
-          <span>{businessProfile.appName}</span>
+          {businessProfile.logoUrl ? (
+            <img
+              src={businessProfile.logoUrl}
+              alt={businessProfile.appName}
+              className="w-7 h-7 rounded-lg object-cover border border-zinc-200 shrink-0"
+            />
+          ) : (
+            <span
+              style={{
+                backgroundColor: businessProfile.brandColor || '#059669',
+              }}
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+            />
+          )}
+          <span className="truncate max-w-[180px] sm:max-w-[260px]">
+            {businessProfile.appName}
+          </span>
         </a>
 
         {/* Zone 2: 4 Clean Typographic Navigation Links */}
@@ -1785,20 +1997,33 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Zone 3: Primary Action CTA */}
-        <button
-          type="button"
-          onClick={() => {
-            setEditingClient(null);
-            setPrefillClientData(null);
-            setModalDefaultDate(activeDate);
-            setModalDefaultTime('08:30');
-            setIsClientModalOpen(true);
-          }}
-          className="min-h-[38px] px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-zinc-950 rounded-xl hover:bg-zinc-800 active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
-        >
-          + Nuevo Corte
-        </button>
+        {/* Zone 3: Primary Action CTA + Prominent Cerrar Sesión Button */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setEditingClient(null);
+              setPrefillClientData(null);
+              setModalDefaultDate(activeDate);
+              setModalDefaultTime('08:30');
+              setIsClientModalOpen(true);
+            }}
+            className="min-h-[38px] px-3.5 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-zinc-950 rounded-xl hover:bg-zinc-800 active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
+          >
+            + Nuevo Corte
+          </button>
+
+          <button
+            type="button"
+            onClick={handleFullLogout}
+            data-testid="logout-btn"
+            title="Cerrar sesión y volver a la pantalla de acceso"
+            className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 hover:text-red-700 bg-zinc-100 hover:bg-red-50 rounded-xl transition-colors whitespace-nowrap shrink-0"
+          >
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Cerrar Sesión</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Content Container */}
@@ -1806,7 +2031,7 @@ export default function App() {
         id="main-workspace"
         className="flex-1 max-w-[1400px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4"
       >
-        {/* Minimalist Utility & Voice Strip + Firebase Account Status */}
+        {/* Minimalist Utility & Voice Strip + Multi-Tenant SaaS Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-zinc-200/70">
           <VoiceAccessibilityPanel
             activeDate={activeDate}
@@ -1823,28 +2048,57 @@ export default function App() {
             onExecuteVoiceCommand={handleExecuteVoiceCommand}
           />
 
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setIsFirstTimeWhiteLabelSetup(false);
+                setIsWhiteLabelModalOpen(true);
+              }}
+              data-testid="open-whitelabel-btn"
+              className="min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-100 text-zinc-800 hover:bg-zinc-200/80 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Mi Marca y Precios</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              data-testid="open-subscription-btn"
+              className={`min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                subscriptionEval.isProActive
+                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200/80'
+                  : 'bg-sky-50 text-sky-900 border border-sky-200/80 hover:bg-sky-100'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <span>{subscriptionEval.badgeText}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(true)}
               data-testid="open-firebase-auth-btn"
               className={`min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                firebaseUser
+                firebaseUser || activeTenantSession
                   ? 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200/80'
               }`}
             >
-              {firebaseUser ? (
+              {firebaseUser || activeTenantSession ? (
                 <>
                   <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="truncate max-w-[160px]">
-                    {firebaseUser.email || 'Firebase Conectado'}
+                  <span className="truncate max-w-[140px]">
+                    {activeTenantSession?.email ||
+                      firebaseUser?.email ||
+                      'Cuenta Activa'}
                   </span>
                 </>
               ) : (
                 <>
                   <UserIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                  <span>Iniciar Sesión / Nube</span>
+                  <span>Modo Demo</span>
                 </>
               )}
             </button>
@@ -2985,9 +3239,10 @@ export default function App() {
         </button>
       </nav>
 
-      {/* Firebase Authentication & Cloud Sync Modal */}
+      {/* Firebase Authentication & Multi-Tenant Account Modal */}
       <AuthGate
         currentUser={firebaseUser}
+        activeTenantSession={activeTenantSession}
         isModalOpen={isAuthModalOpen}
         isFullScreenGate={false}
         appName={businessProfile.appName}
@@ -2996,16 +3251,59 @@ export default function App() {
         cloudSyncMessage={cloudSyncMessage}
         onCloseModal={() => setIsAuthModalOpen(false)}
         onContinueLocalMode={() => {
-          try {
-            localStorage.setItem(LOCAL_MODE_KEY, 'true');
-          } catch {
-            // ignore
-          }
           setLocalModeAccepted(true);
           setIsAuthModalOpen(false);
         }}
+        onTenantAuthenticated={hydrateTenantWorkspace}
+        onLogoutSession={handleFullLogout}
+        onOpenWhiteLabelWizard={() => {
+          setIsFirstTimeWhiteLabelSetup(false);
+          setIsWhiteLabelModalOpen(true);
+        }}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
         onForceCloudSync={handleForceCloudSync}
         onAuthSuccessBanner={showBanner}
+      />
+
+      {/* White-Label Brand, Logo, City & Base Pricing Wizard Modal */}
+      <OnboardingWhiteLabelModal
+        isOpen={isWhiteLabelModalOpen}
+        isFirstTimeSetup={isFirstTimeWhiteLabelSetup}
+        businessProfile={businessProfile}
+        baseLocation={baseLocation}
+        paymentProfile={paymentProfile}
+        userEmail={activeTenantSession?.email || firebaseUser?.email}
+        onClose={() => {
+          setIsWhiteLabelModalOpen(false);
+          setIsFirstTimeWhiteLabelSetup(false);
+        }}
+        onSaveCompleteConfiguration={({
+          businessProfile: updatedBusiness,
+          baseLocation: updatedBase,
+          paymentProfile: updatedPayment,
+        }) => {
+          setBusinessProfile(updatedBusiness);
+          setBaseLocation(updatedBase);
+          setPaymentProfile(updatedPayment);
+          setScheduledJobs((prev) =>
+            recalculateJobsFromDynamicBase(updatedBase.coordinates, prev)
+          );
+          showBanner(
+            `Marca Blanca actualizada: "${updatedBusiness.appName}" · ${updatedBase.city} · $${updatedBusiness.baseRatePerSqm}/m² · Alias: ${updatedPayment.alias}`
+          );
+        }}
+      />
+
+      {/* Mercado Pago SaaS Subscription & Billing Modal */}
+      <SubscriptionMercadoPagoModal
+        isOpen={isSubscriptionModalOpen}
+        subscription={subscription}
+        businessName={businessProfile.appName}
+        userEmail={activeTenantSession?.email || firebaseUser?.email}
+        activeDateStr={activeDate}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        onUpdateSubscription={(updatedSub) => setSubscription(updatedSub)}
+        onShowBanner={showBanner}
       />
 
       {/* Operational Modals */}
@@ -3037,6 +3335,7 @@ export default function App() {
         defaultDate={modalDefaultDate}
         defaultTime={modalDefaultTime}
         baseLocation={baseLocation}
+        businessProfile={businessProfile}
         existingProperties={properties}
         onClose={() => {
           setIsClientModalOpen(false);

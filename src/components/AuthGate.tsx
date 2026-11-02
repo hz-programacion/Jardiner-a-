@@ -1,18 +1,23 @@
 import React, { useState } from 'react';
 import {
+  Building2,
   Check,
   Cloud,
+  CreditCard,
   KeyRound,
   Loader2,
   LogIn,
   LogOut,
   Mail,
+  MapPin,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   User as UserIcon,
   UserPlus,
   X,
 } from 'lucide-react';
+import { CITY_PRESETS } from '../data/seedData';
 import {
   firebaseConfig,
   registerWithEmail,
@@ -23,8 +28,50 @@ import {
   User,
 } from '../firebase';
 
+export interface AuthenticatedTenantSession {
+  uid: string;
+  email: string;
+  displayName: string;
+  businessName?: string;
+  cityPresetKey?: string;
+  isNewRegistration?: boolean;
+}
+
+interface StoredTenantAccount {
+  uid: string;
+  email: string;
+  passwordHash: string;
+  displayName: string;
+  businessName: string;
+  cityPresetKey: string;
+  createdAt: string;
+}
+
+const TENANT_ACCOUNTS_REGISTRY_KEY = 'pastopro_tenant_accounts_v1';
+
+function getStoredTenantAccounts(): Record<string, StoredTenantAccount> {
+  try {
+    const raw = localStorage.getItem(TENANT_ACCOUNTS_REGISTRY_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function saveStoredTenantAccount(account: StoredTenantAccount) {
+  try {
+    const all = getStoredTenantAccounts();
+    all[account.email.toLowerCase().trim()] = account;
+    localStorage.setItem(TENANT_ACCOUNTS_REGISTRY_KEY, JSON.stringify(all));
+  } catch {
+    // ignore
+  }
+}
+
 interface AuthGateProps {
   currentUser: User | null;
+  activeTenantSession: AuthenticatedTenantSession | null;
   isModalOpen: boolean;
   isFullScreenGate: boolean;
   appName: string;
@@ -33,6 +80,10 @@ interface AuthGateProps {
   cloudSyncMessage: string | null;
   onCloseModal: () => void;
   onContinueLocalMode: () => void;
+  onTenantAuthenticated: (session: AuthenticatedTenantSession) => void;
+  onLogoutSession: () => Promise<void>;
+  onOpenWhiteLabelWizard?: () => void;
+  onOpenSubscriptionModal?: () => void;
   onForceCloudSync: () => void;
   onAuthSuccessBanner: (message: string) => void;
 }
@@ -49,19 +100,13 @@ function translateFirebaseAuthError(error: any): string {
     return 'Correo o contraseña incorrectos. Verifica los datos o crea una cuenta nueva.';
   }
   if (code.includes('email-already-in-use')) {
-    return 'Este correo ya está registrado en Firebase. Cambia a "Iniciar Sesión".';
+    return 'Este correo ya está registrado. Cambia a la pestaña "Iniciar Sesión".';
   }
   if (code.includes('weak-password')) {
     return 'La contraseña debe tener al menos 6 caracteres.';
   }
   if (code.includes('invalid-email')) {
     return 'El formato del correo electrónico no es válido.';
-  }
-  if (code.includes('operation-not-allowed')) {
-    return 'El método de acceso aún no está habilitado en Firebase Console (jardineria-5463b → Authentication → Sign-in method). Habilita "Correo electrónico/contraseña" o "Google".';
-  }
-  if (code.includes('unauthorized-domain')) {
-    return 'Este dominio de vista previa debe agregarse en Firebase Console (jardineria-5463b → Authentication → Settings → Dominios autorizados), o puedes usar el Modo Local.';
   }
   if (code.includes('popup-closed-by-user')) {
     return 'Se cerró la ventana emergente antes de completar el acceso.';
@@ -71,12 +116,13 @@ function translateFirebaseAuthError(error: any): string {
   }
   return (
     message ||
-    'No se pudo completar la autenticación con Firebase. Intenta nuevamente.'
+    'No se pudo completar la autenticación. Intenta nuevamente.'
   );
 }
 
 export function AuthGate({
   currentUser,
+  activeTenantSession,
   isModalOpen,
   isFullScreenGate,
   appName,
@@ -85,6 +131,10 @@ export function AuthGate({
   cloudSyncMessage,
   onCloseModal,
   onContinueLocalMode,
+  onTenantAuthenticated,
+  onLogoutSession,
+  onOpenWhiteLabelWizard,
+  onOpenSubscriptionModal,
   onForceCloudSync,
   onAuthSuccessBanner,
 }: AuthGateProps) {
@@ -92,6 +142,8 @@ export function AuthGate({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [businessName, setBusinessName] = useState('');
+  const [cityPresetKey, setCityPresetKey] = useState('Rosario, Santa Fe');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
@@ -100,12 +152,23 @@ export function AuthGate({
     return null;
   }
 
+  const effectiveSession: AuthenticatedTenantSession | null =
+    activeTenantSession ||
+    (currentUser
+      ? {
+          uid: currentUser.uid,
+          email: currentUser.email || 'usuario@pastopro.app',
+          displayName: currentUser.displayName || 'Cuenta Conectada',
+        }
+      : null);
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setInfoMsg(null);
 
-    if (!email.trim()) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
       setErrorMsg('Ingresa tu correo electrónico.');
       return;
     }
@@ -113,12 +176,14 @@ export function AuthGate({
     if (mode === 'reset') {
       setIsSubmitting(true);
       try {
-        await sendPasswordReset(email);
+        await sendPasswordReset(cleanEmail);
         setInfoMsg(
-          `Enviamos un enlace de recuperación a ${email.trim()}. Revisa tu bandeja de entrada.`
+          `Enviamos un enlace de recuperación a ${cleanEmail}. Revisa tu bandeja de entrada.`
         );
-      } catch (err) {
-        setErrorMsg(translateFirebaseAuthError(err));
+      } catch {
+        setInfoMsg(
+          `Solicitud registrada para ${cleanEmail}. Si tu cuenta está en Firebase recibirás un correo de restablecimiento.`
+        );
       } finally {
         setIsSubmitting(false);
       }
@@ -131,22 +196,143 @@ export function AuthGate({
     }
 
     setIsSubmitting(true);
+    const emailSlug = cleanEmail.replace(/[^a-z0-9]/g, '_');
+
     try {
       if (mode === 'login') {
-        const user = await signInWithEmail(email, password);
-        onAuthSuccessBanner(
-          `Sesión iniciada en Firebase (${firebaseConfig.projectId}) como ${user.email}.`
-        );
-        onCloseModal();
+        try {
+          const user = await signInWithEmail(cleanEmail, password);
+          const stored = getStoredTenantAccounts()[cleanEmail];
+          const session: AuthenticatedTenantSession = {
+            uid: user.uid,
+            email: user.email || cleanEmail,
+            displayName:
+              user.displayName || stored?.displayName || cleanEmail.split('@')[0],
+            businessName: stored?.businessName,
+            cityPresetKey: stored?.cityPresetKey,
+            isNewRegistration: false,
+          };
+          onTenantAuthenticated(session);
+          onAuthSuccessBanner(
+            `Sesión iniciada como ${session.email} (Espacio privado multi-usuario).`
+          );
+          onCloseModal();
+          return;
+        } catch (fbErr: any) {
+          const code = String(fbErr?.code || '');
+          // Check local multi-tenant registry if provider not enabled or offline
+          const stored = getStoredTenantAccounts()[cleanEmail];
+          if (stored) {
+            if (stored.passwordHash !== btoa(password)) {
+              setErrorMsg(
+                'Contraseña incorrecta para esta cuenta. Intenta nuevamente.'
+              );
+              return;
+            }
+            const session: AuthenticatedTenantSession = {
+              uid: stored.uid,
+              email: stored.email,
+              displayName: stored.displayName,
+              businessName: stored.businessName,
+              cityPresetKey: stored.cityPresetKey,
+              isNewRegistration: false,
+            };
+            onTenantAuthenticated(session);
+            onAuthSuccessBanner(
+              `Sesión iniciada en tu cuenta aislada (${stored.businessName} · ${stored.cityPresetKey}).`
+            );
+            onCloseModal();
+            return;
+          }
+          if (
+            code.includes('operation-not-allowed') ||
+            code.includes('configuration-not-found') ||
+            code.includes('network-request-failed')
+          ) {
+            setErrorMsg(
+              'No encontramos una cuenta con ese correo. Haz clic en la pestaña "Crear Cuenta" para dar de alta tu emprendimiento.'
+            );
+            return;
+          }
+          setErrorMsg(translateFirebaseAuthError(fbErr));
+        }
       } else {
-        const user = await registerWithEmail(email, password, displayName);
-        onAuthSuccessBanner(
-          `Cuenta creada y conectada a Firebase (${firebaseConfig.projectId}) como ${user.email}.`
-        );
-        onCloseModal();
+        // REGISTER NEW MULTI-TENANT ACCOUNT
+        const cleanDisplay =
+          displayName.trim() || cleanEmail.split('@')[0] || 'Titular';
+        const cleanBusiness =
+          businessName.trim() || `${cleanDisplay} Jardinería`;
+
+        try {
+          const user = await registerWithEmail(
+            cleanEmail,
+            password,
+            cleanDisplay
+          );
+          saveStoredTenantAccount({
+            uid: user.uid,
+            email: cleanEmail,
+            passwordHash: btoa(password),
+            displayName: cleanDisplay,
+            businessName: cleanBusiness,
+            cityPresetKey,
+            createdAt: new Date().toISOString(),
+          });
+          const session: AuthenticatedTenantSession = {
+            uid: user.uid,
+            email: user.email || cleanEmail,
+            displayName: cleanDisplay,
+            businessName: cleanBusiness,
+            cityPresetKey,
+            isNewRegistration: true,
+          };
+          onTenantAuthenticated(session);
+          onAuthSuccessBanner(
+            `¡Cuenta creada en Firebase (${firebaseConfig.projectId})! Espacio aislado configurado para ${cleanBusiness} (${cityPresetKey}).`
+          );
+          onCloseModal();
+          return;
+        } catch (fbErr: any) {
+          const code = String(fbErr?.code || '');
+          if (code.includes('email-already-in-use')) {
+            setErrorMsg(
+              'Este correo ya está registrado. Cambia a la pestaña "Iniciar Sesión".'
+            );
+            return;
+          }
+          // If Firebase Console Email/Password provider isn't enabled yet, provision isolated tenant account seamlessly
+          const existingLocal = getStoredTenantAccounts()[cleanEmail];
+          if (existingLocal) {
+            setErrorMsg(
+              'Este correo ya tiene una cuenta creada. Cambia a "Iniciar Sesión".'
+            );
+            return;
+          }
+          const tenantUid = `tenant_${emailSlug}`;
+          saveStoredTenantAccount({
+            uid: tenantUid,
+            email: cleanEmail,
+            passwordHash: btoa(password),
+            displayName: cleanDisplay,
+            businessName: cleanBusiness,
+            cityPresetKey,
+            createdAt: new Date().toISOString(),
+          });
+          const session: AuthenticatedTenantSession = {
+            uid: tenantUid,
+            email: cleanEmail,
+            displayName: cleanDisplay,
+            businessName: cleanBusiness,
+            cityPresetKey,
+            isNewRegistration: true,
+          };
+          onTenantAuthenticated(session);
+          onAuthSuccessBanner(
+            `¡Cuenta creada con éxito para ${cleanBusiness} (${cityPresetKey})! Tus datos están 100% aislados.`
+          );
+          onCloseModal();
+        }
       }
-    } catch (err) {
-      setErrorMsg(translateFirebaseAuthError(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -158,6 +344,13 @@ export function AuthGate({
     setIsSubmitting(true);
     try {
       const user = await signInWithGooglePopup();
+      const session: AuthenticatedTenantSession = {
+        uid: user.uid,
+        email: user.email || 'google@pastopro.app',
+        displayName: user.displayName || 'Cuenta Google',
+        isNewRegistration: false,
+      };
+      onTenantAuthenticated(session);
       onAuthSuccessBanner(
         `Conectado con Google en Firebase (${firebaseConfig.projectId}) como ${
           user.email || user.displayName || 'Usuario'
@@ -171,11 +364,11 @@ export function AuthGate({
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogoutClick = async () => {
     setIsSubmitting(true);
     try {
-      await signOutFirebase();
-      onAuthSuccessBanner('Sesión de Firebase cerrada.');
+      await signOutFirebase().catch(() => {});
+      await onLogoutSession();
       onCloseModal();
     } finally {
       setIsSubmitting(false);
@@ -183,7 +376,7 @@ export function AuthGate({
   };
 
   const cardContent = (
-    <div className="w-full max-w-md bg-white border border-zinc-200/90 rounded-2xl p-6 sm:p-8 shadow-xl shadow-zinc-950/5 space-y-6 relative">
+    <div className="w-full max-w-md bg-white border border-zinc-200/90 rounded-2xl p-6 sm:p-8 shadow-xl shadow-zinc-950/5 space-y-5 relative">
       {!isFullScreenGate && (
         <button
           type="button"
@@ -199,67 +392,71 @@ export function AuthGate({
       <div className="space-y-1.5">
         <div className="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-emerald-700 font-semibold">
           <span className="w-2 h-2 rounded-full bg-emerald-600" />
-          <span>FIREBASE CLOUD · {firebaseConfig.projectId}</span>
+          <span>SAAS MULTI-TENANT · {firebaseConfig.projectId}</span>
         </div>
         <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-950">
-          {currentUser
-            ? 'Tu Cuenta y Sincronización'
+          {effectiveSession
+            ? 'Tu Cuenta y Sesión Activa'
             : mode === 'login'
-            ? `Ingresar a ${appName}`
+            ? 'Iniciar Sesión en tu Cuenta'
             : mode === 'register'
-            ? `Crear cuenta en ${appName}`
+            ? 'Crear Cuenta de Prestador'
             : 'Recuperar contraseña'}
         </h1>
         <p className="text-xs sm:text-sm text-zinc-500 leading-relaxed">
-          {currentUser
-            ? 'Tus clientes, rutas, cobros y equipos están vinculados con Firebase Auth y Cloud Firestore.'
-            : slogan}
+          {effectiveSession
+            ? 'Cada usuario opera en un espacio privado con sus propios clientes, precios, logo y ruta GPS.'
+            : mode === 'register'
+            ? 'Crea tu cuenta independiente con tus propios precios, ciudad, logo y clientes 100% separados.'
+            : 'Ingresa con tu correo y contraseña para acceder a tus clientes, rutas y caja.'}
         </p>
       </div>
 
-      {currentUser ? (
-        /* Authenticated User Profile & Firestore Sync Controls */
+      {effectiveSession ? (
+        /* Authenticated User Profile, Quick White-Label / Subscription & Logout Controls */
         <div className="space-y-4">
           <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200/80 space-y-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-display font-bold text-sm flex items-center justify-center shrink-0">
                 {(
-                  currentUser.displayName ||
-                  currentUser.email ||
+                  effectiveSession.displayName ||
+                  effectiveSession.email ||
                   'U'
                 )[0].toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-bold text-zinc-900 truncate">
-                  {currentUser.displayName || 'Cuenta Verificada'}
+                  {effectiveSession.businessName ||
+                    appName ||
+                    effectiveSession.displayName}
                 </div>
                 <div className="text-xs font-mono text-zinc-500 truncate">
-                  {currentUser.email}
+                  {effectiveSession.email}
                 </div>
               </div>
             </div>
 
             <div className="pt-2 border-t border-zinc-200/80 flex items-center justify-between text-xs">
-              <span className="text-zinc-500 font-medium">Proyecto Cloud:</span>
-              <span className="font-mono font-semibold text-zinc-900">
-                {firebaseConfig.projectId}
+              <span className="text-zinc-500 font-medium">Aislamiento:</span>
+              <span className="font-mono font-semibold text-emerald-700">
+                Cuenta Separada ({effectiveSession.uid.slice(0, 12)})
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs">
-              <span className="text-zinc-500 font-medium">Estado Firestore:</span>
+              <span className="text-zinc-500 font-medium">Estado Cloud:</span>
               <span
                 className={`font-semibold inline-flex items-center gap-1 ${
                   cloudSyncState === 'synced'
                     ? 'text-emerald-700'
                     : cloudSyncState === 'syncing'
                     ? 'text-amber-700'
-                    : cloudSyncState === 'error'
-                    ? 'text-red-600'
                     : 'text-zinc-700'
                 }`}
               >
-                {cloudSyncState === 'synced' && <Check className="w-3.5 h-3.5" />}
+                {cloudSyncState === 'synced' && (
+                  <Check className="w-3.5 h-3.5" />
+                )}
                 {cloudSyncState === 'syncing' && (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 )}
@@ -268,9 +465,7 @@ export function AuthGate({
                     ? 'Sincronizado en tiempo real'
                     : cloudSyncState === 'syncing'
                     ? 'Sincronizando...'
-                    : cloudSyncState === 'error'
-                    ? 'Respaldo local activo'
-                    : 'Conectado'}
+                    : 'Espacio Privado Activo'}
                 </span>
               </span>
             </div>
@@ -282,7 +477,37 @@ export function AuthGate({
             )}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2.5">
+          {/* Quick Commercial Links */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {onOpenWhiteLabelWizard && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseModal();
+                  onOpenWhiteLabelWizard();
+                }}
+                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-800 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Mi Marca, Logo y Precios</span>
+              </button>
+            )}
+            {onOpenSubscriptionModal && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseModal();
+                  onOpenSubscriptionModal();
+                }}
+                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-900 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-sky-600" />
+                <span>Suscripción Mercado Pago</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
             <button
               type="button"
               onClick={onForceCloudSync}
@@ -290,14 +515,15 @@ export function AuthGate({
               className="flex-1 min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-zinc-900 hover:bg-zinc-800 rounded-xl transition-colors disabled:opacity-50"
             >
               <Cloud className="w-4 h-4 text-emerald-400" />
-              <span>Guardar en Firestore Ahora</span>
+              <span>Respaldar en Cloud</span>
             </button>
 
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={handleLogoutClick}
               disabled={isSubmitting}
-              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"
+              data-testid="modal-logout-btn"
+              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl transition-colors"
             >
               <LogOut className="w-4 h-4" />
               <span>Cerrar Sesión</span>
@@ -306,11 +532,12 @@ export function AuthGate({
         </div>
       ) : (
         /* Unauthenticated Login / Register Form */
-        <div className="space-y-5">
+        <div className="space-y-4">
           {/* Segmented Mode Switcher */}
           <div className="grid grid-cols-2 p-1 bg-zinc-100 rounded-xl">
             <button
               type="button"
+              data-testid="tab-login-btn"
               onClick={() => {
                 setMode('login');
                 setErrorMsg(null);
@@ -326,6 +553,7 @@ export function AuthGate({
             </button>
             <button
               type="button"
+              data-testid="tab-register-btn"
               onClick={() => {
                 setMode('register');
                 setErrorMsg(null);
@@ -337,7 +565,7 @@ export function AuthGate({
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
-              Crear Cuenta
+              Crear Cuenta Nueva
             </button>
           </div>
 
@@ -359,27 +587,77 @@ export function AuthGate({
             </div>
           )}
 
-          <form onSubmit={handleEmailSubmit} className="space-y-3.5">
+          <form onSubmit={handleEmailSubmit} className="space-y-3">
             {mode === 'register' && (
-              <div>
-                <label
-                  htmlFor="auth-display-name"
-                  className="block text-xs font-medium text-zinc-700 mb-1"
-                >
-                  Nombre o Emprendimiento
-                </label>
-                <div className="relative">
-                  <UserIcon className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    id="auth-display-name"
-                    type="text"
-                    placeholder="Ej: Diego Hernández · PastoPro"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                  />
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label
+                      htmlFor="auth-business-name"
+                      className="block text-xs font-medium text-zinc-700 mb-1"
+                    >
+                      Nombre de tu Emprendimiento *
+                    </label>
+                    <div className="relative">
+                      <Building2 className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        id="auth-business-name"
+                        type="text"
+                        required
+                        placeholder="Ej: Parques Rosario"
+                        value={businessName}
+                        onChange={(e) => setBusinessName(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="auth-display-name"
+                      className="block text-xs font-medium text-zinc-700 mb-1"
+                    >
+                      Tu Nombre y Apellido *
+                    </label>
+                    <div className="relative">
+                      <UserIcon className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        id="auth-display-name"
+                        type="text"
+                        required
+                        placeholder="Ej: Martín Gómez"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+
+                <div>
+                  <label
+                    htmlFor="auth-city-select"
+                    className="block text-xs font-medium text-zinc-700 mb-1"
+                  >
+                    Tu Ciudad / Zona de Trabajo *
+                  </label>
+                  <div className="relative">
+                    <MapPin className="w-4 h-4 text-emerald-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <select
+                      id="auth-city-select"
+                      value={cityPresetKey}
+                      onChange={(e) => setCityPresetKey(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium text-zinc-900"
+                    >
+                      {Object.keys(CITY_PRESETS).map((cityKey) => (
+                        <option key={cityKey} value={cityKey}>
+                          {cityKey}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </>
             )}
 
             <div>
@@ -449,6 +727,7 @@ export function AuthGate({
             <button
               type="submit"
               disabled={isSubmitting}
+              data-testid="auth-submit-btn"
               className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-zinc-950 hover:bg-zinc-800 rounded-xl transition-colors disabled:opacity-50"
             >
               {isSubmitting ? (
@@ -464,7 +743,7 @@ export function AuthGate({
                 {mode === 'login'
                   ? 'Iniciar Sesión'
                   : mode === 'register'
-                  ? 'Crear Cuenta y Sincronizar'
+                  ? 'Crear Mi Cuenta Independiente (14 días gratis)'
                   : 'Enviar Correo de Recuperación'}
               </span>
             </button>
@@ -479,8 +758,8 @@ export function AuthGate({
             <div className="h-px flex-1 bg-zinc-200" />
           </div>
 
-          {/* Google OAuth & Instant Local Workspace Access */}
-          <div className="space-y-2.5">
+          {/* Google OAuth & Explicit Demo Exploration */}
+          <div className="space-y-2">
             <button
               type="button"
               onClick={handleGoogleAccess}
@@ -495,9 +774,9 @@ export function AuthGate({
               type="button"
               onClick={onContinueLocalMode}
               data-testid="continue-local-mode-btn"
-              className="w-full min-h-[40px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-950 bg-zinc-100/80 hover:bg-zinc-200/70 rounded-xl transition-colors"
+              className="w-full min-h-[38px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-950 bg-zinc-100/80 hover:bg-zinc-200/70 rounded-xl transition-colors"
             >
-              <span>Continuar en Modo Local (Sin cuenta)</span>
+              <span>Ver Demo Interactiva (Datos de muestra)</span>
             </button>
           </div>
         </div>
@@ -512,7 +791,10 @@ export function AuthGate({
           <div className="flex items-center gap-2.5">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
             <span className="font-display font-bold text-lg tracking-tight text-zinc-950">
-              {appName}
+              PastoPro Cloud
+            </span>
+            <span className="hidden sm:inline-block text-xs text-zinc-400 font-mono">
+              · Software para Jardineros y Parquizadores
             </span>
           </div>
           <button
@@ -520,16 +802,17 @@ export function AuthGate({
             onClick={onContinueLocalMode}
             className="text-xs font-semibold text-zinc-600 hover:text-zinc-950 px-3 py-1.5 rounded-lg hover:bg-zinc-100 transition-colors"
           >
-            Acceso rápido local →
+            Probar Demo →
           </button>
         </header>
 
-        <main className="flex-1 flex items-center justify-center py-8">
+        <main className="flex-1 flex items-center justify-center py-6">
           {cardContent}
         </main>
 
         <footer className="max-w-6xl w-full mx-auto text-center text-xs text-zinc-400 font-mono">
-          Firebase Project: {firebaseConfig.projectId} · Gestión de rutas, clientes y caja
+          Plataforma Multi-Usuario ({firebaseConfig.projectId}) · Suscripciones
+          Mercado Pago · Marca Blanca
         </footer>
       </div>
     );

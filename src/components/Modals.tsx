@@ -708,6 +708,7 @@ interface ClientFormModalProps {
   defaultDate?: string;
   defaultTime?: string;
   baseLocation: BaseLocationConfig;
+  businessProfile?: BusinessProfileConfig;
   existingProperties?: ClientProperty[];
   onClose: () => void;
   onSaveClient: (
@@ -728,6 +729,7 @@ export function ClientFormModal({
   defaultDate = '2026-11-01',
   defaultTime = '08:30',
   baseLocation,
+  businessProfile,
   existingProperties = [],
   onClose,
   onSaveClient,
@@ -828,7 +830,15 @@ export function ClientFormModal({
     frequency,
     1,
     grassCondition,
-    includesBagging
+    includesBagging,
+    businessProfile
+      ? {
+          baseRatePerSqm: businessProfile.baseRatePerSqm,
+          minServicePrice: businessProfile.minServicePrice,
+          tallGrassSurchargePct: businessProfile.tallGrassSurchargePct,
+          baggingSurchargePct: businessProfile.baggingSurchargePct,
+        }
+      : undefined
   );
   const effectivePrice = customPrice
     ? Number(customPrice)
@@ -1173,12 +1183,21 @@ export function ClientFormModal({
           <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs text-slate-500">
-                Tarifa Sugerida ({parsedArea} m² · {grassCondition} · ~
-                {suggestion.estimatedFuelLiters}L nafta)
+                Tarifa Sugerida ({parsedArea} m² · $
+                {businessProfile?.baseRatePerSqm || 65}/m² · {grassCondition})
               </div>
-              <div className="text-base font-bold font-mono text-emerald-800 tabular-nums mt-0.5">
-                ${suggestion.suggestedPrice.toLocaleString('es-AR')} · ~
-                {suggestion.estimatedMinutes} min
+              <div className="text-base font-bold font-mono text-emerald-800 tabular-nums mt-0.5 flex items-center gap-2">
+                <span>
+                  ${suggestion.suggestedPrice.toLocaleString('es-AR')} · ~
+                  {suggestion.estimatedMinutes} min
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCustomPrice(String(suggestion.suggestedPrice))}
+                  className="px-2 py-0.5 text-[11px] font-sans font-semibold bg-emerald-100 text-emerald-900 rounded-md hover:bg-emerald-200"
+                >
+                  Usar tarifa sugerida
+                </button>
               </div>
             </div>
             <div className="w-36">
@@ -2025,20 +2044,38 @@ export function InvoiceReceiptModal({
         className="bg-white border border-slate-200 rounded-2xl max-w-md w-full max-h-[92vh] overflow-y-auto p-6 shadow-xl my-4"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
-          <div>
-            <div className="text-[11px] font-mono text-emerald-800 font-bold">
-              {brandName.toUpperCase()} · {invoice.invoiceNumber}
+          <div className="flex items-start gap-3">
+            {businessProfile?.logoUrl ? (
+              <img
+                src={businessProfile.logoUrl}
+                alt={brandName}
+                className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0"
+              />
+            ) : (
+              <div
+                style={{
+                  backgroundColor: businessProfile?.brandColor || '#059669',
+                }}
+                className="w-11 h-11 rounded-xl text-white font-display font-bold text-base flex items-center justify-center shrink-0"
+              >
+                {brandName[0]?.toUpperCase() || 'P'}
+              </div>
+            )}
+            <div>
+              <div className="text-[11px] font-mono text-emerald-800 font-bold">
+                {brandName.toUpperCase()} · {invoice.invoiceNumber}
+              </div>
+              <h2
+                id="receipt-modal-title"
+                className="text-lg font-bold text-slate-900 mt-0.5"
+              >
+                {invoice.clientName}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {brandSlogan}
+                {ownerPhone ? ` · Tel: ${ownerPhone}` : ''}
+              </p>
             </div>
-            <h2
-              id="receipt-modal-title"
-              className="text-lg font-bold text-slate-900 mt-0.5"
-            >
-              {invoice.clientName}
-            </h2>
-            <p className="text-xs text-slate-500">
-              {brandSlogan}
-              {ownerPhone ? ` · Tel: ${ownerPhone}` : ''}
-            </p>
           </div>
           <div className="no-print flex items-center gap-1.5 shrink-0">
             <SpeakButton

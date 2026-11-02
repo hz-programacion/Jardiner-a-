@@ -316,7 +316,12 @@ export function calculateSuggestedPrice(
   extraTasksCount = 0,
   grassCondition: GrassCondition = 'Regular',
   includesBagging = true,
-  customRates?: { baseRatePerSqm?: number; minServicePrice?: number }
+  customRates?: {
+    baseRatePerSqm?: number;
+    minServicePrice?: number;
+    tallGrassSurchargePct?: number;
+    baggingSurchargePct?: number;
+  }
 ): {
   suggestedPrice: number;
   estimatedMinutes: number;
@@ -359,16 +364,29 @@ export function calculateSuggestedPrice(
     'Única vez': 1.35,
   };
 
+  const tallPct =
+    customRates?.tallGrassSurchargePct !== undefined &&
+    customRates.tallGrassSurchargePct >= 0
+      ? customRates.tallGrassSurchargePct / 100
+      : 0.3;
+
   const conditionMultiplier: Record<GrassCondition, number> = {
     Regular: 1.0,
-    Alto: 1.3,
-    'Maleza Pesada': 1.65,
+    Alto: 1 + tallPct,
+    'Maleza Pesada': 1 + Math.max(0.5, tallPct * 2),
   };
+
+  const baggingAddon = includesBagging
+    ? customRates?.baggingSurchargePct !== undefined &&
+      customRates.baggingSurchargePct >= 0
+      ? Math.round(rawPrice * (customRates.baggingSurchargePct / 100))
+      : Math.round(cleanArea * 12)
+    : 0;
 
   rawPrice =
     rawPrice * freqMultiplier[frequency] * conditionMultiplier[grassCondition] +
     extraTasksCount * 4500 +
-    (includesBagging ? Math.round(cleanArea * 12) : 0);
+    baggingAddon;
 
   const suggestedPrice = Math.round(rawPrice / 500) * 500;
 

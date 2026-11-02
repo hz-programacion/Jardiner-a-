@@ -18,6 +18,62 @@ export const BASE_DEPOT: BaseLocationConfig = {
 };
 
 export const CITY_PRESETS: Record<string, BaseLocationConfig> = {
+  'Rosario, Santa Fe': {
+    name: 'Base Operativa Rosario / Funes',
+    city: 'Rosario, Santa Fe',
+    address: 'Bv. Oroño 1100, Rosario / Funes',
+    coordinates: { lat: -32.9442, lng: -60.6505 },
+    source: 'manual',
+  },
+  'Córdoba Capital, Córdoba': {
+    name: 'Base Operativa Córdoba',
+    city: 'Córdoba Capital, Córdoba',
+    address: 'Av. Colón 850, Córdoba',
+    coordinates: { lat: -31.4201, lng: -64.1888 },
+    source: 'manual',
+  },
+  'Buenos Aires (CABA)': {
+    name: 'Base Operativa CABA',
+    city: 'Buenos Aires (CABA)',
+    address: 'Av. del Libertador 5200, CABA',
+    coordinates: { lat: -34.6037, lng: -58.3816 },
+    source: 'manual',
+  },
+  'Zona Norte GBA (Pilar / Tigre / San Isidro)': {
+    name: 'Base Zona Norte GBA',
+    city: 'Pilar / Tigre, Buenos Aires',
+    address: 'Panamericana Ramal Pilar Km 46',
+    coordinates: { lat: -34.4587, lng: -58.9142 },
+    source: 'manual',
+  },
+  'Mendoza Capital / Luján de Cuyo': {
+    name: 'Base Operativa Mendoza',
+    city: 'Mendoza, Mendoza',
+    address: 'Av. San Martín 1400, Mendoza',
+    coordinates: { lat: -32.8895, lng: -68.8458 },
+    source: 'manual',
+  },
+  'La Plata / City Bell, Buenos Aires': {
+    name: 'Base Operativa La Plata',
+    city: 'La Plata, Buenos Aires',
+    address: 'Camino Centenario y Calle 50, City Bell',
+    coordinates: { lat: -34.9205, lng: -57.9536 },
+    source: 'manual',
+  },
+  'Mar del Plata, Buenos Aires': {
+    name: 'Base Operativa Mar del Plata',
+    city: 'Mar del Plata, Buenos Aires',
+    address: 'Av. Constitución 4500, Mar del Plata',
+    coordinates: { lat: -38.0055, lng: -57.5426 },
+    source: 'manual',
+  },
+  'Santa Fe Capital / Santo Tomé': {
+    name: 'Base Operativa Santa Fe',
+    city: 'Santa Fe Capital',
+    address: 'Bv. Gálvez 1800, Santa Fe',
+    coordinates: { lat: -31.6333, lng: -60.7 },
+    source: 'manual',
+  },
   'Venado Tuerto, Santa Fe': {
     name: 'Base Venado Tuerto',
     city: 'Venado Tuerto, Santa Fe',
@@ -25,11 +81,11 @@ export const CITY_PRESETS: Record<string, BaseLocationConfig> = {
     coordinates: { lat: -33.7456, lng: -61.9688 },
     source: 'manual',
   },
-  'Murphy, Santa Fe': {
-    name: 'Punto de Partida Murphy',
-    city: 'Murphy, Santa Fe',
-    address: 'Ruta 33 y San Martín, Murphy',
-    coordinates: { lat: -33.6425, lng: -61.8594 },
+  'Pergamino, Buenos Aires': {
+    name: 'Punto de Partida Pergamino',
+    city: 'Pergamino, Buenos Aires',
+    address: 'Av. de Mayo 600, Pergamino',
+    coordinates: { lat: -33.8899, lng: -60.5736 },
     source: 'manual',
   },
   'Firmat, Santa Fe': {
@@ -37,6 +93,20 @@ export const CITY_PRESETS: Record<string, BaseLocationConfig> = {
     city: 'Firmat, Santa Fe',
     address: 'Bv. Colón y Santa Fe, Firmat',
     coordinates: { lat: -33.4586, lng: -61.4842 },
+    source: 'manual',
+  },
+  'Casilda, Santa Fe': {
+    name: 'Punto de Partida Casilda',
+    city: 'Casilda, Santa Fe',
+    address: 'Bv. Ovidio Lagos 1200, Casilda',
+    coordinates: { lat: -33.0442, lng: -61.1681 },
+    source: 'manual',
+  },
+  'Murphy, Santa Fe': {
+    name: 'Punto de Partida Murphy',
+    city: 'Murphy, Santa Fe',
+    address: 'Ruta 33 y San Martín, Murphy',
+    coordinates: { lat: -33.6425, lng: -61.8594 },
     source: 'manual',
   },
   'Villa Cañás, Santa Fe': {
@@ -51,27 +121,6 @@ export const CITY_PRESETS: Record<string, BaseLocationConfig> = {
     city: 'Rufino, Santa Fe',
     address: 'Av. Cobo y España, Rufino',
     coordinates: { lat: -34.2642, lng: -62.7125 },
-    source: 'manual',
-  },
-  'Casilda, Santa Fe': {
-    name: 'Punto de Partida Casilda',
-    city: 'Casilda, Santa Fe',
-    address: 'Bv. Ovidio Lagos 1200, Casilda',
-    coordinates: { lat: -33.0442, lng: -61.1681 },
-    source: 'manual',
-  },
-  'Pergamino, Buenos Aires': {
-    name: 'Punto de Partida Pergamino',
-    city: 'Pergamino, Buenos Aires',
-    address: 'Av. de Mayo 600, Pergamino',
-    coordinates: { lat: -33.8899, lng: -60.5736 },
-    source: 'manual',
-  },
-  'Rosario, Santa Fe': {
-    name: 'Punto de Partida Rosario / Funes',
-    city: 'Rosario, Santa Fe',
-    address: 'Ruta 9, Funes / Rosario',
-    coordinates: { lat: -32.9442, lng: -60.6505 },
     source: 'manual',
   },
 };
