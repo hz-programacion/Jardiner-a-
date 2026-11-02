@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: workspaces/{userId}
+    // Document ID: {userId} (matches request.auth.uid)
+    // Required fields: ownerUid, properties, todayJobs, invoices, expenses, equipment
+    // Optional fields: ownerEmail, updatedAtIso, updatedAt, businessProfile, baseLocation, paymentProfile
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        request.auth.token.email == "hz.mdiego@gmail.com" &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isValidWorkspace(data, userId) {
+      return data.keys().hasAll(['ownerUid', 'properties', 'todayJobs', 'invoices', 'expenses', 'equipment']) &&
+        data.keys().hasOnly([
+          'ownerUid',
+          'ownerEmail',
+          'updatedAtIso',
+          'updatedAt',
+          'businessProfile',
+          'baseLocation',
+          'paymentProfile',
+          'properties',
+          'todayJobs',
+          'invoices',
+          'expenses',
+          'equipment'
+        ]) &&
+        data.ownerUid is string &&
+        data.ownerUid == userId &&
+        data.properties is list && data.properties.size() <= 500 &&
+        data.todayJobs is list && data.todayJobs.size() <= 1000 &&
+        data.invoices is list && data.invoices.size() <= 1000 &&
+        data.expenses is list && data.expenses.size() <= 1000 &&
+        data.equipment is list && data.equipment.size() <= 200;
+    }
+
+    match /workspaces/{userId} {
+      allow read: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow create: if isValidId(userId) && isOwner(userId) && isValidWorkspace(request.resource.data, userId);
+      allow update: if isValidId(userId) && isOwner(userId) &&
+        isValidWorkspace(request.resource.data, userId) &&
+        request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

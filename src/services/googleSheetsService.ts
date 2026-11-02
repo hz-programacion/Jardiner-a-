@@ -1,12 +1,10 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getAuth,
   signInWithPopup,
   GoogleAuthProvider,
   onAuthStateChanged,
   User,
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { auth } from '../firebase';
 import {
   ClientProperty,
   InvoiceRecord,
@@ -15,9 +13,6 @@ import {
 import { calculateFinancialSummary } from '../utils/lawnLogic';
 
 export const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));

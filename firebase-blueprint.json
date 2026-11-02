@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "Espacio de trabajo operativo completo del usuario autenticado (clientes, cortes agendados, recibos, gastos, equipos y configuración de emprendimiento).",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "UID de Firebase Auth del propietario del espacio de trabajo."
+        },
+        "ownerEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Correo electrónico del propietario."
+        },
+        "updatedAtIso": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal ISO de última actualización."
+        },
+        "businessProfile": {
+          "type": "object",
+          "description": "Configuración de nombre de app, eslogan y tarifas base."
+        },
+        "baseLocation": {
+          "type": "object",
+          "description": "Punto de salida base o coordenadas GPS."
+        },
+        "paymentProfile": {
+          "type": "object",
+          "description": "Alias y CBU para recibos."
+        },
+        "properties": {
+          "type": "array",
+          "description": "Cartera de clientes y lotes."
+        },
+        "todayJobs": {
+          "type": "array",
+          "description": "Cortes programados e historial de rutas."
+        },
+        "invoices": {
+          "type": "array",
+          "description": "Recibos y cobros emitidos."
+        },
+        "expenses": {
+          "type": "array",
+          "description": "Gastos operativos registrados."
+        },
+        "equipment": {
+          "type": "array",
+          "description": "Máquinas y control de horas de uso."
+        }
+      },
+      "required": ["ownerUid", "properties", "todayJobs", "invoices", "expenses", "equipment"]
+    }
+  },
+  "firestore": {
+    "/workspaces/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserWorkspace"
+      },
+      "description": "Documento principal sincronizado en tiempo real por cada usuario autenticado en jardineria-5463b."
+    }
+  }
+}
