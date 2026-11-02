@@ -47,13 +47,6 @@ import {
 } from '../utils/lawnLogic';
 import { NEIGHBORHOOD_COORDINATES } from '../data/seedData';
 import { StreetAddressAutocomplete } from './StreetAddressAutocomplete';
-import { SpeakButton, VoiceDictationButton } from './AccessibilityVoiceBar';
-import {
-  VISUAL_EXPENSE_PRESETS,
-  buildClientSpeech,
-  buildFinanceSummarySpeech,
-  speakTextInSpanish,
-} from '../utils/accessibilityAndVoice';
 
 interface ClientsViewProps {
   properties: ClientProperty[];
@@ -75,7 +68,7 @@ export function ClientsView({
   properties,
   todayJobs,
   invoices,
-  paymentAlias = 'pastopro.venado',
+  paymentAlias = 'mi.alias.cobro',
   onOpenNewClient,
   onEditClient,
   onViewClientHistory,
@@ -128,7 +121,7 @@ export function ClientsView({
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 surface-card rounded-2xl p-4 sm:p-5">
         <div>
           <h2 className="font-display text-base sm:text-lg font-bold text-slate-900">
-            Cartera de Clientes · Venado Tuerto y Pueblos ({filtered.length} de {properties.length})
+            Cartera de Clientes y Propiedades ({filtered.length} de {properties.length})
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Consulta cuánto le cobraste anteriormente a cada cliente, ajusta tarifas por inflación o salda cobros pendientes
@@ -136,25 +129,14 @@ export function ClientsView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
-            <div className="relative flex-1 sm:w-52">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Buscar cliente, calle o pueblo..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              />
-            </div>
-            <VoiceDictationButton
-              fieldLabel="el cliente a buscar"
-              onTranscript={(txt) => setSearchQuery(txt)}
-              quickOptions={properties.slice(0, 6).map((p) => ({
-                emoji: p.propertyType === 'Quinta' ? '🌳' : p.propertyType === 'Terreno' ? '🌾' : '🏠',
-                label: `${p.clientName} (${p.address})`,
-                value: p.clientName,
-              }))}
+          <div className="relative flex-1 sm:w-52">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Buscar cliente, calle o zona..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-2 text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
             />
           </div>
 
@@ -164,9 +146,9 @@ export function ClientsView({
             onChange={(e) => setFilterZone(e.target.value)}
             className="px-2.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-medium"
           >
-            <option value="Todas">Venado Tuerto + Pueblos</option>
-            <option value="Venado Tuerto">Solo Venado Tuerto</option>
-            <option value="Pueblos">Otros Pueblos / Ruta</option>
+            <option value="Todas">Todas las zonas</option>
+            <option value="Venado Tuerto">Zona Centro / Urbana</option>
+            <option value="Pueblos">Zonas Residenciales / Ruta</option>
           </select>
 
           <select
@@ -265,7 +247,7 @@ export function ClientsView({
             No se encontraron clientes con ese filtro
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Agrega un nuevo cliente en Venado Tuerto o pueblos vecinos con el botón &ldquo;Nuevo Cliente&rdquo;.
+            Agrega un nuevo cliente en tu cartera con el botón &ldquo;Nuevo Cliente&rdquo;.
           </p>
         </div>
       ) : (
@@ -364,11 +346,6 @@ export function ClientsView({
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <SpeakButton
-                        text={buildClientSpeech(prop, history.pendingBalance)}
-                        label="🔊 Escuchar"
-                      />
-
                       <button
                         type="button"
                         onClick={() => onEditClient(prop)}
@@ -562,10 +539,6 @@ export function ClientsView({
                         </td>
                         <td className="py-3.5 px-4 align-top text-right">
                           <div className="inline-flex items-center justify-end gap-1.5">
-                            <SpeakButton
-                              text={buildClientSpeech(prop, history.pendingBalance)}
-                              label="🔊"
-                            />
                             <button
                               type="button"
                               onClick={() => onScheduleClient(prop)}
@@ -1523,7 +1496,7 @@ export function BillingView({
                       </div>
 
                       <div className="text-xs text-slate-500 mt-1">
-                        {inv.address} · {inv.neighborhood || 'Venado Tuerto'} ·{' '}
+                        {inv.address} · {inv.neighborhood || 'Zona Centro'} ·{' '}
                         {inv.propertyType} ({inv.areaSqm} m²) · Fecha:{' '}
                         <span className="font-mono">{inv.date}</span>
                       </div>
@@ -1863,10 +1836,10 @@ export function BillingView({
             <div className="lg:col-span-5 surface-card rounded-2xl p-4 sm:p-5 space-y-3">
               <div className="border-b border-slate-200 pb-2.5">
                 <h3 className="text-sm font-bold text-slate-900">
-                  Ingresos por Barrio (Venado Tuerto) y Pueblos
+                  Ingresos por Barrio, Zona y Localidad
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Rentabilidad por zona para evaluar viajes por Ruta 8 y Ruta 33
+                  Rentabilidad comparativa por zona de cobertura operativa
                 </p>
               </div>
 

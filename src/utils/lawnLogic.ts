@@ -1,4 +1,5 @@
 import {
+  ArgentinaCitySuggestion,
   BackupPayload,
   CalendarDayCell,
   ClientProperty,
@@ -14,7 +15,6 @@ import {
   OfflineActionType,
   OfflineSyncAction,
   OperationalExpense,
-  ParsedVoiceCommand,
   PaymentMethod,
   PeriodFilter,
   PropertyType,
@@ -22,7 +22,19 @@ import {
   StreetSuggestionItem,
   WeatherForecastDay,
 } from '../types/lawn';
-import { STREET_CATALOG } from '../data/seedData';
+import {
+  ARGENTINA_CITIES_CATALOG,
+  STREET_CATALOG,
+  UNIVERSAL_ARGENTINA_STREETS,
+  getLocalDateOffset,
+} from '../data/seedData';
+
+/**
+ * Returns the real current local date in YYYY-MM-DD format so "Hoy" is never stale.
+ */
+export function getTodayIsoLocal(now = new Date()): string {
+  return getLocalDateOffset(0, now);
+}
 
 /**
  * Calculates Haversine distance in kilometers between two LatLng coordinates.
@@ -214,7 +226,7 @@ const WEEKDAY_SHORT_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 export function buildWeekDaysForDate(
   selectedDateStr: string,
   allJobs: ScheduledJob[],
-  todayDateStr = '2026-11-01'
+  todayDateStr = getTodayIsoLocal()
 ): CalendarDayCell[] {
   const [yr, mo, dy] = selectedDateStr.split('-').map(Number);
   const selectedUtc = new Date(
@@ -265,7 +277,7 @@ export function buildMonthCalendarGrid(
   monthIndex0: number,
   allJobs: ScheduledJob[],
   selectedDateStr: string,
-  todayDateStr = '2026-11-01'
+  todayDateStr = getTodayIsoLocal()
 ): CalendarDayCell[] {
   const firstOfMonth = new Date(Date.UTC(year, monthIndex0, 1));
   const startOffset = (firstOfMonth.getUTCDay() + 6) % 7; // Monday = 0
@@ -617,7 +629,7 @@ export function filterRecordsByPeriod(
   invoices: InvoiceRecord[],
   expenses: OperationalExpense[],
   period: PeriodFilter,
-  referenceDateStr = '2026-11-01',
+  referenceDateStr = getTodayIsoLocal(),
   customRange?: { from: string; to: string }
 ): {
   filteredInvoices: InvoiceRecord[];
@@ -1023,7 +1035,7 @@ export function applyBulkPriceIncrease(
   scheduledJobs: ScheduledJob[],
   percentIncrease: number,
   onlyOutdated = false,
-  referenceDateStr = '2026-11-01'
+  referenceDateStr = getTodayIsoLocal()
 ): {
   updatedProperties: ClientProperty[];
   updatedJobs: ScheduledJob[];
@@ -1180,7 +1192,7 @@ export function flushOfflineActionQueue(
 /**
  * Normalizes a string by removing accents/diacritics and converting to lowercase.
  */
-function normalizeSearchText(str: string): string {
+export function normalizeSearchText(str: string): string {
   return (str || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -1189,8 +1201,120 @@ function normalizeSearchText(str: string): string {
 }
 
 /**
- * Generates instant, typo-resistant street and address suggestions for the active city and region.
- * Preserves any user-typed street number (e.g. "Casey 850" -> "Av. Casey 850") and interpolates coordinates.
+ * Resolves GPS coordinates and canonical city metadata for any Argentine city/locality string.
+ */
+export function resolveCityCoordinates(
+  cityLabel: string
+): LatLng & {
+  fullName: string;
+  defaultAddress: string;
+  coordinates: LatLng;
+} {
+  const norm = normalizeSearchText(cityLabel);
+  const fallbackCoord: LatLng = { lat: -33.7456, lng: -61.9688 };
+  if (!norm) {
+    return {
+      ...fallbackCoord,
+      fullName: 'Venado Tuerto, Santa Fe',
+      defaultAddress: 'Bv. 25 de Mayo 850',
+      coordinates: fallbackCoord,
+    };
+  }
+
+  const exactOrPartial = ARGENTINA_CITIES_CATALOG.find(
+    (item) =>
+      normalizeSearchText(item.fullName) === norm ||
+      normalizeSearchText(item.city) === norm ||
+      norm.includes(normalizeSearchText(item.city)) ||
+      normalizeSearchText(item.fullName).includes(norm)
+  );
+
+  if (exactOrPartial) {
+    return {
+      ...exactOrPartial.coordinates,
+      fullName: exactOrPartial.fullName,
+      defaultAddress: exactOrPartial.defaultAddress,
+      coordinates: exactOrPartial.coordinates,
+    };
+  }
+
+  return {
+    ...fallbackCoord,
+    fullName: cityLabel.trim() || 'Rosario, Santa Fe',
+    defaultAddress: 'Centro',
+    coordinates: fallbackCoord,
+  };
+}
+
+/**
+ * Predictive Google Maps-style autocomplete for cities and localities across all of Argentina.
+ * Example: typing "Venado" immediately recommends "Venado Tuerto, Santa Fe" with its exact GPS coordinates.
+ */
+export function getArgentinaCitySuggestions(
+  query: string,
+  limit = 8
+): ArgentinaCitySuggestion[] {
+  const raw = (query || '').trim();
+  const normQuery = normalizeSearchText(raw);
+
+  if (!normQuery) {
+    return ARGENTINA_CITIES_CATALOG.slice(0, limit);
+  }
+
+  const scored: Array<{ item: ArgentinaCitySuggestion; score: number }> = [];
+
+  for (const item of ARGENTINA_CITIES_CATALOG) {
+    const normCity = normalizeSearchText(item.city);
+    const normFull = normalizeSearchText(item.fullName);
+    const normProv = normalizeSearchText(item.province);
+
+    let score = 0;
+    if (normFull === normQuery || normCity === normQuery) {
+      score = 100;
+    } else if (normCity.startsWith(normQuery)) {
+      score = 90;
+    } else if (normFull.startsWith(normQuery)) {
+      score = 80;
+    } else if (normCity.includes(normQuery)) {
+      score = 70;
+    } else if (normFull.includes(normQuery)) {
+      score = 60;
+    } else if (normProv.startsWith(normQuery)) {
+      score = 45;
+    }
+
+    if (score > 0) {
+      scored.push({ item, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.item.fullName.localeCompare(b.item.fullName));
+  const matches = scored.slice(0, limit).map((s) => s.item);
+
+  // If the user typed a locality not in the catalog, offer a clean formatted Argentina suggestion
+  if (raw.length >= 3 && matches.length === 0) {
+    const cleanCity = raw
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    const fullName = cleanCity.includes(',') ? cleanCity : `${cleanCity}, Argentina`;
+    matches.push({
+      id: `custom-ar-city-${normQuery}`,
+      city: cleanCity.split(',')[0].trim(),
+      province: cleanCity.split(',')[1]?.trim() || 'Argentina',
+      fullName,
+      defaultAddress: `Av. San Martín 500, ${cleanCity.split(',')[0].trim()}`,
+      coordinates: { lat: -34.6037, lng: -58.3816 },
+    });
+  }
+
+  return matches;
+}
+
+/**
+ * Generates instant, typo-resistant street and address suggestions for ANY city in Argentina.
+ * Preserves any user-typed street number (e.g. "Casey 850" -> "Av. Casey 850" or "San Martin 420" -> "Av. San Martín 420")
+ * and interpolates coordinates around the active city's real GPS center.
  */
 export function getStreetAddressSuggestions(
   query: string,
@@ -1207,27 +1331,37 @@ export function getStreetAddressSuggestions(
     : normalizedQuery;
   const typedHouseNumber = numberMatch ? numberMatch[2] : '';
 
-  const normalizedActiveCity = normalizeSearchText(activeCity.split(',')[0]);
+  const cleanActiveCityFull = (activeCity || 'Venado Tuerto, Santa Fe').trim();
+  const cleanActiveCityShort = cleanActiveCityFull.split(',')[0].trim() || 'Centro';
+  const normalizedActiveCity = normalizeSearchText(cleanActiveCityShort);
+  const activeCityCoords = resolveCityCoordinates(cleanActiveCityFull);
 
   const results: StreetSuggestionItem[] = [];
   const seenAddresses = new Set<string>();
 
-  // 1. Match against STREET_CATALOG
+  // 1. Match against STREET_CATALOG (prioritizing entries that belong to the active city or explicit query)
   for (let i = 0; i < STREET_CATALOG.length; i++) {
     const entry = STREET_CATALOG[i];
     const normStreet = normalizeSearchText(entry.streetName);
     const normHood = normalizeSearchText(entry.neighborhood);
     const normCity = normalizeSearchText(entry.city);
 
-    const matchesQuery =
-      !normalizedQuery ||
-      normStreet.includes(streetSearchPart) ||
-      normHood.includes(normalizedQuery) ||
-      normCity.includes(normalizedQuery);
+    const isSameCity =
+      normCity.includes(normalizedActiveCity) ||
+      normalizedActiveCity.includes(normCity.split(',')[0].trim());
+
+    // If user hasn't typed a specific different city, only show local catalog streets if they match activeCity
+    const matchesQuery = !normalizedQuery
+      ? isSameCity
+      : normStreet.includes(streetSearchPart) ||
+        normHood.includes(normalizedQuery) ||
+        normCity.includes(normalizedQuery);
 
     if (!matchesQuery) continue;
+    if (!isSameCity && !normCity.includes(normalizedQuery) && normalizedActiveCity !== 'venado tuerto') {
+      continue;
+    }
 
-    // Determine house number to suggest
     const displayNumber = typedHouseNumber || entry.sampleNumber;
     const fullStreetAddress = displayNumber
       ? `${entry.streetName} ${displayNumber}`
@@ -1237,7 +1371,6 @@ export function getStreetAddressSuggestions(
     if (seenAddresses.has(dedupeKey)) continue;
     seenAddresses.add(dedupeKey);
 
-    // Slight coordinate interpolation when user enters a custom street number
     const numericHouse = Number(typedHouseNumber.replace(/\D/g, '')) || 0;
     const latOffset = numericHouse ? ((numericHouse % 1500) - 750) * 0.000004 : 0;
     const lngOffset = numericHouse ? ((numericHouse % 1200) - 600) * 0.000004 : 0;
@@ -1255,7 +1388,47 @@ export function getStreetAddressSuggestions(
     });
   }
 
-  // 2. Also include existing client addresses that match the query
+  // 2. Match against UNIVERSAL_ARGENTINA_STREETS adapted to the user's activeCity
+  for (let u = 0; u < UNIVERSAL_ARGENTINA_STREETS.length; u++) {
+    const uStreet = UNIVERSAL_ARGENTINA_STREETS[u];
+    const normUStreet = normalizeSearchText(uStreet.streetName);
+    const normUZone = normalizeSearchText(uStreet.zoneLabel);
+
+    const matchesUniversal =
+      !normalizedQuery ||
+      normUStreet.includes(streetSearchPart) ||
+      streetSearchPart.includes(normUStreet.replace(/^(av\.|bv\.)\s*/, '')) ||
+      normUZone.includes(normalizedQuery);
+
+    if (!matchesUniversal) continue;
+
+    const displayNumber = typedHouseNumber || uStreet.sampleNumber;
+    const fullStreetAddress = displayNumber
+      ? `${uStreet.streetName} ${displayNumber}`
+      : uStreet.streetName;
+    const hoodLabel = `${cleanActiveCityShort} - ${uStreet.zoneLabel}`;
+    const dedupeKey = `${fullStreetAddress.toLowerCase()}|${hoodLabel.toLowerCase()}`;
+
+    if (seenAddresses.has(dedupeKey)) continue;
+    seenAddresses.add(dedupeKey);
+
+    const numericHouse = Number(typedHouseNumber.replace(/\D/g, '')) || 0;
+    const houseDelta = numericHouse ? ((numericHouse % 1200) - 600) * 0.000004 : 0;
+
+    results.push({
+      id: `univ-${u}-${displayNumber}`,
+      streetAddress: fullStreetAddress,
+      neighborhood: hoodLabel,
+      city: cleanActiveCityFull,
+      coordinates: {
+        lat: Math.round((activeCityCoords.lat + uStreet.latOffset + houseDelta) * 10000) / 10000,
+        lng: Math.round((activeCityCoords.lng + uStreet.lngOffset - houseDelta) * 10000) / 10000,
+      },
+      source: 'local_catalog',
+    });
+  }
+
+  // 3. Also include existing client addresses that match the query
   for (const prop of existingProperties) {
     const normAddr = normalizeSearchText(prop.address);
     const normHood = normalizeSearchText(prop.neighborhood);
@@ -1301,24 +1474,34 @@ export function getStreetAddressSuggestions(
     return bStarts - aStarts;
   });
 
-  // If user typed a custom street name with >= 3 chars that had 0 catalog matches, offer a formatted suggestion in active city
-  if (raw.length >= 3 && results.length === 0) {
-    const formattedCustom =
-      raw.charAt(0).toUpperCase() +
-      raw.slice(1) +
-      (/\d/.test(raw) ? '' : ' 450');
-    results.push({
-      id: `custom-sug-${raw}`,
-      streetAddress: formattedCustom,
-      neighborhood: `${activeCity.split(',')[0].trim()} - Centro`,
-      city: activeCity,
-      coordinates: { lat: -33.7456, lng: -61.9688 },
-      source: 'local_catalog',
-    });
+  // 4. Always offer a direct Google Maps-style completion for custom user street names
+  if (raw.length >= 2) {
+    const cleanStreetCap = raw
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    const hasNum = /\d/.test(cleanStreetCap);
+    const primaryCustomAddr = hasNum ? cleanStreetCap : `${cleanStreetCap} 450`;
+    const primaryKey = `${primaryCustomAddr.toLowerCase()}|${cleanActiveCityShort.toLowerCase()} - centro`;
+
+    if (!seenAddresses.has(primaryKey)) {
+      results.push({
+        id: `custom-sug-primary-${raw}`,
+        streetAddress: primaryCustomAddr,
+        neighborhood: `${cleanActiveCityShort} - Centro`,
+        city: cleanActiveCityFull,
+        coordinates: {
+          lat: Math.round((activeCityCoords.lat + 0.0015) * 10000) / 10000,
+          lng: Math.round((activeCityCoords.lng - 0.0015) * 10000) / 10000,
+        },
+        source: 'local_catalog',
+      });
+    }
   }
 
   return results.slice(0, 7);
 }
+
 
 /**
  * Updates an existing scheduled job (cita) in state (changing date, time, price, address, tasks, notes, or status),
@@ -1433,354 +1616,6 @@ function addDaysToIsoDate(dateStr: string, deltaDays: number): string {
   if (Number.isNaN(base.getTime())) return dateStr;
   base.setUTCDate(base.getUTCDate() + deltaDays);
   return base.toISOString().slice(0, 10);
-}
-
-/**
- * Parses a natural-language Spanish voice command transcript (from Web Speech API SpeechRecognition)
- * into a structured action intent with target entities and a spoken confirmation message.
- */
-export function parseVoiceCommand(
-  transcript: string,
-  activeDateStr: string,
-  activeDateJobs: ScheduledJob[],
-  todayReferenceStr = '2026-11-01'
-): ParsedVoiceCommand {
-  const rawTranscript = (transcript || '').trim();
-  const norm = normalizeSearchText(rawTranscript);
-
-  if (!norm) {
-    return {
-      intent: 'UNKNOWN',
-      rawTranscript,
-      normalizedTranscript: norm,
-      spokenResponse:
-        'No se escuchó ningún comando. Prueba diciendo: agregar cliente, completar corte, cambiar fecha o leer ruta.',
-    };
-  }
-
-  // 1. ADD_CLIENT ("agregar cliente", "nuevo cliente", "nuevo corte", "cargar cliente", "crear cliente")
-  if (
-    norm.includes('agregar cliente') ||
-    norm.includes('nuevo cliente') ||
-    norm.includes('nuevo corte') ||
-    norm.includes('agregar corte') ||
-    norm.includes('cargar cliente') ||
-    norm.includes('crear cliente')
-  ) {
-    // Extract optional client name spoken after the trigger keyword
-    let extractedName = '';
-    const nameMatch = rawTranscript.match(
-      /(?:agregar cliente|nuevo cliente|cargar cliente|crear cliente)\s+(.+)$/i
-    );
-    if (nameMatch && nameMatch[1]) {
-      extractedName = nameMatch[1].trim();
-    }
-
-    return {
-      intent: 'ADD_CLIENT',
-      rawTranscript,
-      normalizedTranscript: norm,
-      ...(extractedName ? { targetClientName: extractedName } : {}),
-      spokenResponse: extractedName
-        ? `Abriendo formulario para agregar al cliente ${extractedName}.`
-        : 'Abriendo formulario para agregar un nuevo cliente o corte programado.',
-    };
-  }
-
-  // 2. COMPLETE_JOB ("completar corte", "terminar corte", "cobrar corte", "corte terminado", "finalizar corte")
-  if (
-    norm.includes('completar corte') ||
-    norm.includes('terminar corte') ||
-    norm.includes('cobrar corte') ||
-    norm.includes('finalizar corte') ||
-    norm.includes('corte completado') ||
-    norm.includes('corte terminado') ||
-    norm.startsWith('cobrar a ') ||
-    norm.startsWith('completar ')
-  ) {
-    const pendingOrActive = [...activeDateJobs]
-      .filter((j) => j.status !== 'Completado')
-      .sort((a, b) => a.orderIndex - b.orderIndex);
-
-    // Check if the user mentioned a specific client name or street
-    const matchedByName = pendingOrActive.find((j) => {
-      const clientTokens = normalizeSearchText(j.clientName)
-        .split(/\s+/)
-        .filter((t) => t.length >= 3);
-      const addrTokens = normalizeSearchText(j.address)
-        .split(/\s+/)
-        .filter((t) => t.length >= 3);
-      return (
-        clientTokens.some((t) => norm.includes(t)) ||
-        addrTokens.some((t) => norm.includes(t))
-      );
-    });
-
-    // Otherwise prefer an 'En Curso' job first, then the first 'Pendiente' job
-    const inProgressJob = pendingOrActive.find((j) => j.status === 'En Curso');
-    const chosenJob = matchedByName || inProgressJob || pendingOrActive[0];
-
-    if (!chosenJob) {
-      return {
-        intent: 'COMPLETE_JOB',
-        rawTranscript,
-        normalizedTranscript: norm,
-        spokenResponse:
-          'Todos los cortes de esta fecha ya figuran completados.',
-      };
-    }
-
-    return {
-      intent: 'COMPLETE_JOB',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetJobId: chosenJob.id,
-      targetClientName: chosenJob.clientName,
-      spokenResponse: `Abriendo cobro y comprobante para completar el corte de ${chosenJob.clientName}, importe ${chosenJob.price.toLocaleString('es-AR')} pesos.`,
-    };
-  }
-
-  // 3. START_JOB ("iniciar corte", "empezar corte", "arrancar corte")
-  if (
-    norm.includes('iniciar corte') ||
-    norm.includes('empezar corte') ||
-    norm.includes('arrancar corte') ||
-    norm.includes('comenzar corte')
-  ) {
-    const pendingJobs = [...activeDateJobs]
-      .filter((j) => j.status === 'Pendiente')
-      .sort((a, b) => a.orderIndex - b.orderIndex);
-
-    const matchedByName = pendingJobs.find((j) =>
-      normalizeSearchText(j.clientName)
-        .split(/\s+/)
-        .filter((t) => t.length >= 3)
-        .some((t) => norm.includes(t))
-    );
-    const chosenJob = matchedByName || pendingJobs[0];
-
-    if (!chosenJob) {
-      return {
-        intent: 'START_JOB',
-        rawTranscript,
-        normalizedTranscript: norm,
-        spokenResponse: 'No hay cortes pendientes para iniciar en esta fecha.',
-      };
-    }
-
-    return {
-      intent: 'START_JOB',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetJobId: chosenJob.id,
-      targetClientName: chosenJob.clientName,
-      spokenResponse: `Corte iniciado en lo de ${chosenJob.clientName}, dirección ${chosenJob.address}.`,
-    };
-  }
-
-  // 4. CHANGE_DATE ("cambiar fecha", "ir a manana", "dia siguiente", "ir a ayer", "ir a hoy", etc.)
-  if (
-    norm.includes('cambiar fecha') ||
-    norm.includes('ir a manana') ||
-    norm.includes('pasar a manana') ||
-    norm.includes('fecha manana') ||
-    norm.includes('dia siguiente') ||
-    norm.includes('proximo dia') ||
-    norm.includes('ir a ayer') ||
-    norm.includes('dia anterior') ||
-    norm.includes('ir a hoy') ||
-    norm.includes('volver a hoy') ||
-    norm.includes('fecha de hoy')
-  ) {
-    let targetDateStr = addDaysToIsoDate(activeDateStr, 1);
-    let label = ' el día siguiente';
-
-    if (norm.includes('ayer') || norm.includes('anterior')) {
-      targetDateStr = addDaysToIsoDate(activeDateStr, -1);
-      label = ' el día anterior';
-    } else if (norm.includes('hoy')) {
-      targetDateStr = todayReferenceStr;
-      label = ' hoy';
-    } else if (norm.includes('manana')) {
-      targetDateStr = addDaysToIsoDate(todayReferenceStr, 1);
-      label = ' mañana';
-    } else {
-      // Check if an explicit day of month was spoken (e.g., "cambiar fecha al 5" or "cambiar fecha al 15 de noviembre")
-      const dayNumberMatch = norm.match(/\b(?:al|dia|fecha)\s+(\d{1,2})\b/);
-      if (dayNumberMatch) {
-        const dayNum = Math.min(30, Math.max(1, Number(dayNumberMatch[1])));
-        const yearMonth = activeDateStr.slice(0, 7) || '2026-11';
-        targetDateStr = `${yearMonth}-${String(dayNum).padStart(2, '0')}`;
-        label = ` el ${targetDateStr}`;
-      }
-    }
-
-    return {
-      intent: 'CHANGE_DATE',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetDateStr,
-      spokenResponse: `Cambiando agenda a${label} (${targetDateStr}).`,
-    };
-  }
-
-  // 5. READ_ROUTE ("leer ruta", "escuchar ruta", "que tengo hoy", "resumen del dia", "leer agenda")
-  if (
-    norm.includes('leer ruta') ||
-    norm.includes('escuchar ruta') ||
-    norm.includes('que tengo hoy') ||
-    norm.includes('resumen del dia') ||
-    norm.includes('leer agenda') ||
-    norm.includes('leer paradas') ||
-    norm.includes('leer trabajos')
-  ) {
-    return {
-      intent: 'READ_ROUTE',
-      rawTranscript,
-      normalizedTranscript: norm,
-      spokenResponse: 'Leyendo en voz alta la hoja de ruta del día.',
-    };
-  }
-
-  // 6. OPTIMIZE_ROUTE ("optimizar ruta", "ordenar ruta", "ordenar por cercania")
-  if (
-    norm.includes('optimizar ruta') ||
-    norm.includes('ordenar ruta') ||
-    norm.includes('ordenar por cercania')
-  ) {
-    return {
-      intent: 'OPTIMIZE_ROUTE',
-      rawTranscript,
-      normalizedTranscript: norm,
-      spokenResponse:
-        'Optimizando el orden de la ruta por cercanía GPS desde tu punto de salida.',
-    };
-  }
-
-  // 7. RAIN_DELAY ("llovio", "posponer por lluvia", "reprogramar lluvia")
-  if (
-    norm.includes('llovio') ||
-    norm.includes('posponer por lluvia') ||
-    norm.includes('reprogramar por lluvia') ||
-    norm.includes('alerta lluvia')
-  ) {
-    return {
-      intent: 'RAIN_DELAY',
-      rawTranscript,
-      normalizedTranscript: norm,
-      spokenResponse:
-        'Reprogramando los cortes pendientes un día hacia adelante por lluvia.',
-    };
-  }
-
-  // 8. NAVIGATE_VIEW ("ir a agenda", "ir a clientes", "ir a mi plata", "ir a ruta")
-  if (
-    norm.includes('agenda') ||
-    norm.includes('calendario')
-  ) {
-    return {
-      intent: 'NAVIGATE_VIEW',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetView: 'agenda',
-      spokenResponse: 'Abriendo la agenda y calendario de cortes.',
-    };
-  }
-  if (norm.includes('clientes') || norm.includes('cartera')) {
-    return {
-      intent: 'NAVIGATE_VIEW',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetView: 'clientes',
-      spokenResponse: 'Abriendo la cartera de clientes de Venado Tuerto y pueblos.',
-    };
-  }
-  if (
-    norm.includes('mi plata') ||
-    norm.includes('ganancias') ||
-    norm.includes('estadisticas') ||
-    norm.includes('caja') ||
-    norm.includes('cotizador')
-  ) {
-    return {
-      intent: 'NAVIGATE_VIEW',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetView: 'finanzas',
-      spokenResponse: 'Abriendo Mi Plata, estadísticas de ganancias y cotizador.',
-    };
-  }
-  if (norm.includes('ruta') || norm.includes('mapa')) {
-    return {
-      intent: 'NAVIGATE_VIEW',
-      rawTranscript,
-      normalizedTranscript: norm,
-      targetView: 'hoy',
-      spokenResponse: 'Abriendo la hoja de ruta y mapa GPS del día.',
-    };
-  }
-
-  return {
-    intent: 'UNKNOWN',
-    rawTranscript,
-    normalizedTranscript: norm,
-    spokenResponse: `No reconocí el comando "${rawTranscript}". Puedes decir: agregar cliente, completar corte, cambiar fecha, iniciar corte o leer ruta.`,
-  };
-}
-
-/**
- * Builds a clear, natural Spanish Text-to-Speech summary of the day's route, weather, and next stop.
- */
-export function buildDailyRouteSpeechText(
-  activeDate: string,
-  city: string,
-  jobs: ScheduledJob[],
-  weather: WeatherForecastDay
-): string {
-  const shortCity = (city || 'Venado Tuerto').split(',')[0].trim();
-  if (jobs.length === 0) {
-    return `Hoja de ruta para el ${activeDate} en ${shortCity}. Clima ${weather.condition}, máxima ${weather.tempMax} grados. No tienes cortes programados para esta fecha.`;
-  }
-
-  const completed = jobs.filter((j) => j.status === 'Completado').length;
-  const pending = jobs.length - completed;
-  const totalAmount = jobs.reduce((acc, j) => acc + j.price, 0);
-  const nextStop = [...jobs]
-    .filter((j) => j.status !== 'Completado')
-    .sort((a, b) => a.orderIndex - b.orderIndex)[0];
-
-  const baseIntro = `Resumen de ruta para el ${activeDate} saliendo desde ${shortCity}. Clima ${weather.condition}, ${weather.tempMax} grados, ${weather.cuttingWindowLabel}. Tienes ${jobs.length} cortes en total por ${totalAmount.toLocaleString('es-AR')} pesos: ${completed} completados y ${pending} pendientes.`;
-
-  if (!nextStop) {
-    return `${baseIntro} ¡Felicitaciones! Ya completaste todos los cortes del día.`;
-  }
-
-  return `${baseIntro} Tu próxima parada es la número ${nextStop.orderIndex}, a las ${nextStop.scheduledTime} horas: ${nextStop.clientName}, en ${nextStop.address}, ${nextStop.neighborhood}. Valor del corte: ${nextStop.price.toLocaleString('es-AR')} pesos. Tareas: ${nextStop.tasks.join(', ')}.`;
-}
-
-/**
- * Builds a detailed Spanish Text-to-Speech script for an individual stop card.
- */
-export function buildStopSpeechText(
-  job: ScheduledJob,
-  previousAmount?: number | null
-): string {
-  const statusPhrase =
-    job.status === 'Completado'
-      ? 'Corte ya finalizado.'
-      : job.status === 'En Curso'
-      ? 'Corte actualmente en curso.'
-      : `Parada número ${job.orderIndex}, programada a las ${job.scheduledTime} horas.`;
-
-  const prevPhrase = previousAmount
-    ? ` En la visita anterior se le cobró ${previousAmount.toLocaleString('es-AR')} pesos.`
-    : '';
-
-  const accessPhrase = job.accessNotes
-    ? ` Nota de acceso: ${job.accessNotes}`
-    : '';
-
-  return `${statusPhrase} Cliente: ${job.clientName}. Dirección: ${job.address}, ${job.neighborhood}. Tipo de lote: ${job.propertyType} de ${job.areaSqm} metros cuadrados. Valor a cobrar: ${job.price.toLocaleString('es-AR')} pesos.${prevPhrase} Tareas a realizar: ${job.tasks.join(', ')}.${accessPhrase}`;
 }
 
 /**

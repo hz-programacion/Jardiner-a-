@@ -15,16 +15,16 @@ import {
   filterRecordsByPeriod,
   flushOfflineActionQueue,
   generateGoogleSheetsTsv,
+  getArgentinaCitySuggestions,
   getClientPriceHistory,
   getStreetAddressSuggestions,
+  getTodayIsoLocal,
   getWeatherForDate,
   moveScheduledJobOrder,
   optimizeRouteOrder,
-  parseVoiceCommand,
-  buildDailyRouteSpeechText,
-  buildStopSpeechText,
   recalculateJobsFromDynamicBase,
   reschedulePendingJobsForRain,
+  resolveCityCoordinates,
   sanitizeAndValidateBackupPayload,
   sanitizeText,
   buildSafeWhatsAppUrl,
@@ -34,14 +34,78 @@ import {
   updateScheduledJobInState,
 } from './lawnLogic';
 import {
+  createBlankTenantWorkspace,
+  getInitialAccessApprovalState,
+  isPrimaryAdminEmail,
+  PENDING_APPROVAL_BLOCK_MESSAGE,
+  PRIMARY_ADMIN_EMAIL,
+} from './saasLogic';
+import {
   BASE_DEPOT,
   CITY_PRESETS,
+  getLocalDateOffset,
   INITIAL_EQUIPMENT,
   INITIAL_EXPENSES,
   INITIAL_INVOICES,
   INITIAL_PROPERTIES,
   INITIAL_TODAY_JOBS,
 } from '../data/seedData';
+
+const TODAY_ISO = getTodayIsoLocal();
+const TOMORROW_ISO = getLocalDateOffset(1);
+
+test('getTodayIsoLocal returns real-time local date YYYY-MM-DD', () => {
+  assert.match(TODAY_ISO, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(TODAY_ISO, getLocalDateOffset(0));
+});
+
+test('getArgentinaCitySuggestions anticipates full city name and GPS coordinates when typing partial query like "Venado"', () => {
+  const venadoSuggestions = getArgentinaCitySuggestions('Venado');
+  assert.ok(venadoSuggestions.length > 0);
+  assert.equal(venadoSuggestions[0].fullName, 'Venado Tuerto, Santa Fe');
+  assert.equal(venadoSuggestions[0].coordinates.lat, -33.7456);
+  assert.equal(venadoSuggestions[0].coordinates.lng, -61.9688);
+
+  const resolved = resolveCityCoordinates('Venado');
+  assert.equal(resolved.fullName, 'Venado Tuerto, Santa Fe');
+
+  const cordobaSuggestions = getArgentinaCitySuggestions('Villa Carlos');
+  assert.ok(
+    cordobaSuggestions.some((c) => c.fullName.includes('Villa Carlos Paz'))
+  );
+});
+
+test('Administrator Manual Approval Access Control sets pending state for normal users and approved admin role for hz.mdiego@gmail.com', () => {
+  assert.equal(isPrimaryAdminEmail(PRIMARY_ADMIN_EMAIL), true);
+  assert.equal(isPrimaryAdminEmail('HZ.MDIEGO@GMAIL.COM'), true);
+  assert.equal(isPrimaryAdminEmail('cliente@ejemplo.com'), false);
+
+  const normalUserState = getInitialAccessApprovalState('nuevo@jardinero.com');
+  assert.equal(normalUserState.isApproved, false);
+  assert.equal(normalUserState.approvalStatus, 'pending');
+  assert.equal(normalUserState.role, 'user');
+
+  const adminState = getInitialAccessApprovalState('hz.mdiego@gmail.com');
+  assert.equal(adminState.isApproved, true);
+  assert.equal(adminState.approvalStatus, 'approved');
+  assert.equal(adminState.role, 'admin');
+
+  const blankUserWorkspace = createBlankTenantWorkspace({
+    uid: 'tenant-123',
+    email: 'jardinero@cordoba.com',
+    displayName: 'Juan Pérez',
+    businessName: 'Parques Córdoba',
+    customCityInput: 'Venado',
+  });
+  assert.equal(blankUserWorkspace.isApproved, false);
+  assert.equal(blankUserWorkspace.approvalStatus, 'pending');
+  assert.equal(blankUserWorkspace.role, 'user');
+  assert.equal(blankUserWorkspace.baseLocation.city, 'Venado Tuerto, Santa Fe');
+  assert.equal(
+    PENDING_APPROVAL_BLOCK_MESSAGE,
+    'Cuenta pendiente de validación de pago. Por favor, comunícate con el administrador para activar tu licencia de acceso único.'
+  );
+});
 
 test('calculateHaversineDistanceKm returns 0 for identical points and positive for distinct points', () => {
   const same = calculateHaversineDistanceKm(
@@ -65,7 +129,7 @@ test('computeEndTimeFromStart calculates end time HH:mm accurately', () => {
 
 test('recalculateJobsFromDynamicBase updates leg distances when starting base changes to Murphy or GPS', () => {
   const todayStops = INITIAL_TODAY_JOBS.filter(
-    (j) => j.scheduledDate === '2026-11-01'
+    (j) => j.scheduledDate === TODAY_ISO
   );
   const fromVenado = recalculateJobsFromDynamicBase(
     BASE_DEPOT.coordinates,
@@ -83,35 +147,36 @@ test('recalculateJobsFromDynamicBase updates leg distances when starting base ch
 
 test('buildWeekDaysForDate builds 7 days (Mon-Sun) and groups scheduled jobs by date and time', () => {
   const weekCells = buildWeekDaysForDate(
-    '2026-11-01',
+    TODAY_ISO,
     INITIAL_TODAY_JOBS,
-    '2026-11-01'
+    TODAY_ISO
   );
   assert.equal(weekCells.length, 7);
-  const sundayNov1 = weekCells.find((c) => c.dateStr === '2026-11-01');
-  assert.ok(sundayNov1);
-  assert.equal(sundayNov1.jobs.length, 5);
-  assert.equal(sundayNov1.jobs[0].scheduledTime, '08:00');
-  assert.ok(sundayNov1.totalRevenue > 150000);
+  const todayCell = weekCells.find((c) => c.dateStr === TODAY_ISO);
+  assert.ok(todayCell);
+  assert.equal(todayCell.jobs.length, 5);
+  assert.equal(todayCell.jobs[0].scheduledTime, '08:00');
+  assert.ok(todayCell.totalRevenue > 150000);
 });
 
-test('buildMonthCalendarGrid builds full November 2026 grid with multi-day scheduled jobs', () => {
+test('buildMonthCalendarGrid builds full month grid with multi-day scheduled jobs', () => {
+  const [yStr, mStr] = TODAY_ISO.split('-');
   const monthCells = buildMonthCalendarGrid(
-    2026,
-    10, // November (0-indexed)
+    Number(yStr),
+    Number(mStr) - 1,
     INITIAL_TODAY_JOBS,
-    '2026-11-01',
-    '2026-11-01'
+    TODAY_ISO,
+    TODAY_ISO
   );
   assert.ok(monthCells.length === 35 || monthCells.length === 42);
-  const nov2 = monthCells.find((c) => c.dateStr === '2026-11-02');
-  assert.ok(nov2);
-  assert.equal(nov2.jobs.length, 2);
+  const todayCell = monthCells.find((c) => c.dateStr === TODAY_ISO);
+  assert.ok(todayCell);
+  assert.equal(todayCell.jobs.length, 5);
 });
 
 test('optimizeRouteOrder orders stops from base location', () => {
   const todayOnly = INITIAL_TODAY_JOBS.filter(
-    (j) => j.scheduledDate === '2026-11-01'
+    (j) => j.scheduledDate === TODAY_ISO
   );
   const scrambled = [...todayOnly].reverse();
   const result = optimizeRouteOrder(BASE_DEPOT.coordinates, scrambled);
@@ -153,7 +218,7 @@ test('getClientPriceHistory returns chronological previous amounts and variation
   );
   assert.ok(history.totalCutsCount >= 3);
   assert.equal(history.lastAmount, 38000);
-  assert.equal(history.lastDate, '2026-11-01');
+  assert.equal(history.lastDate, TODAY_ISO);
   assert.equal(history.previousAmount, 38000);
   assert.ok(history.totalBilled > 100000);
 });
@@ -163,7 +228,7 @@ test('filterRecordsByPeriod filters invoices and expenses by hoy, semana, mes_an
     INITIAL_INVOICES,
     INITIAL_EXPENSES,
     'hoy',
-    '2026-11-01'
+    TODAY_ISO
   );
   assert.equal(hoyResult.filteredInvoices.length, 1);
   assert.equal(hoyResult.filteredInvoices[0].amount, 38000);
@@ -238,10 +303,10 @@ test('reschedulePendingJobsForRain and calculateFinancialSummary work accurately
   const delayed = reschedulePendingJobsForRain(
     INITIAL_TODAY_JOBS,
     1,
-    '2026-11-01'
+    TODAY_ISO
   );
-  assert.equal(delayed[0].scheduledDate, '2026-11-01');
-  assert.equal(delayed[1].scheduledDate, '2026-11-02');
+  assert.equal(delayed[0].scheduledDate, TODAY_ISO);
+  assert.equal(delayed[1].scheduledDate, TOMORROW_ISO);
 
   const summary = calculateFinancialSummary(INITIAL_INVOICES, INITIAL_EXPENSES);
   assert.ok(summary.totalFacturado > 0);
@@ -255,7 +320,7 @@ test('applyBulkPriceIncrease increases client tariffs and pending scheduled jobs
       INITIAL_TODAY_JOBS,
       15,
       false,
-      '2026-11-01'
+      TODAY_ISO
     );
 
   assert.equal(updatedCount, INITIAL_PROPERTIES.length);
@@ -307,7 +372,7 @@ test('enqueueOfflineAction and flushOfflineActionQueue manage local Service Work
   assert.ok(flushedQueue.every((item) => item.status === 'Sincronizado'));
 });
 
-test('getStreetAddressSuggestions returns matching streets and preserves custom house numbers', () => {
+test('getStreetAddressSuggestions returns matching streets for any city in Argentina and preserves custom house numbers', () => {
   const suggestions = getStreetAddressSuggestions(
     'Chacabuco 1450',
     'Venado Tuerto, Santa Fe',
@@ -317,21 +382,21 @@ test('getStreetAddressSuggestions returns matching streets and preserves custom 
   assert.equal(suggestions[0].streetAddress, 'Chacabuco 1450');
   assert.equal(suggestions[0].neighborhood, 'Venado Tuerto - Centro');
 
-  const routeSuggestions = getStreetAddressSuggestions(
-    'Aromos',
-    'Venado Tuerto, Santa Fe',
-    INITIAL_PROPERTIES
+  const tandilSuggestions = getStreetAddressSuggestions(
+    'San Martín 450',
+    'Tandil, Buenos Aires',
+    []
   );
-  assert.ok(
-    routeSuggestions.some((s) => s.streetAddress.includes('Los Aromos'))
-  );
+  assert.ok(tandilSuggestions.length > 0);
+  assert.ok(tandilSuggestions[0].streetAddress.includes('450'));
+  assert.equal(tandilSuggestions[0].city, 'Tandil, Buenos Aires');
 });
 
 test('updateScheduledJobInState modifies appointment date, time, price, and address and re-indexes stops', () => {
   const targetJob = INITIAL_TODAY_JOBS[1];
   const modifiedJob = {
     ...targetJob,
-    scheduledDate: '2026-11-02',
+    scheduledDate: TOMORROW_ISO,
     scheduledTime: '07:30',
     price: 52000,
     address: 'Bv. 25 de Mayo 820',
@@ -347,11 +412,10 @@ test('updateScheduledJobInState modifies appointment date, time, price, and addr
 
   const foundJob = updatedJobs.find((j) => j.id === targetJob.id);
   assert.ok(foundJob);
-  assert.equal(foundJob.scheduledDate, '2026-11-02');
+  assert.equal(foundJob.scheduledDate, TOMORROW_ISO);
   assert.equal(foundJob.scheduledTime, '07:30');
   assert.equal(foundJob.price, 52000);
   assert.equal(foundJob.address, 'Bv. 25 de Mayo 820');
-  // Since 07:30 is the earliest stop on 2026-11-02, orderIndex should be 1
   assert.equal(foundJob.orderIndex, 1);
 
   const foundProp = updatedProperties.find(
@@ -364,7 +428,7 @@ test('updateScheduledJobInState modifies appointment date, time, price, and addr
 
 test('moveScheduledJobOrder swaps stop positions on the same day and recalculates leg distances', () => {
   const todayStops = INITIAL_TODAY_JOBS.filter(
-    (j) => j.scheduledDate === '2026-11-01'
+    (j) => j.scheduledDate === TODAY_ISO
   ).sort((a, b) => a.orderIndex - b.orderIndex);
   assert.ok(todayStops.length >= 2);
 
@@ -379,94 +443,13 @@ test('moveScheduledJobOrder swaps stop positions on the same day and recalculate
   );
 
   const reorderedToday = movedDown
-    .filter((j) => j.scheduledDate === '2026-11-01')
+    .filter((j) => j.scheduledDate === TODAY_ISO)
     .sort((a, b) => a.orderIndex - b.orderIndex);
 
   assert.equal(reorderedToday[0].id, secondId);
   assert.equal(reorderedToday[0].orderIndex, 1);
   assert.equal(reorderedToday[1].id, firstId);
   assert.equal(reorderedToday[1].orderIndex, 2);
-});
-
-test('parseVoiceCommand recognizes agregar cliente, completar corte, cambiar fecha, iniciar corte, and navigation commands', () => {
-  const todayJobs = INITIAL_TODAY_JOBS.filter(
-    (j) => j.scheduledDate === '2026-11-01'
-  );
-
-  // 1. Agregar cliente
-  const addCmd = parseVoiceCommand(
-    'Agregar cliente Carlos Gómez',
-    '2026-11-01',
-    todayJobs
-  );
-  assert.equal(addCmd.intent, 'ADD_CLIENT');
-  assert.equal(addCmd.targetClientName, 'Carlos Gómez');
-
-  // 2. Completar corte (picks in-progress or named job)
-  const completeCmd = parseVoiceCommand(
-    'Completar corte',
-    '2026-11-01',
-    todayJobs
-  );
-  assert.equal(completeCmd.intent, 'COMPLETE_JOB');
-  assert.ok(completeCmd.targetJobId);
-
-  const completeNamedCmd = parseVoiceCommand(
-    'Completar corte de Andrés',
-    '2026-11-01',
-    todayJobs
-  );
-  assert.equal(completeNamedCmd.intent, 'COMPLETE_JOB');
-  assert.ok(completeNamedCmd.targetClientName?.includes('Andrés'));
-
-  // 3. Cambiar fecha
-  const dateTomorrowCmd = parseVoiceCommand(
-    'Cambiar fecha a mañana',
-    '2026-11-01',
-    todayJobs,
-    '2026-11-01'
-  );
-  assert.equal(dateTomorrowCmd.intent, 'CHANGE_DATE');
-  assert.equal(dateTomorrowCmd.targetDateStr, '2026-11-02');
-
-  const dateSpecificCmd = parseVoiceCommand(
-    'Cambiar fecha al 8 de noviembre',
-    '2026-11-01',
-    todayJobs,
-    '2026-11-01'
-  );
-  assert.equal(dateSpecificCmd.intent, 'CHANGE_DATE');
-  assert.equal(dateSpecificCmd.targetDateStr, '2026-11-08');
-
-  // 4. Leer ruta & Navegar
-  const readCmd = parseVoiceCommand('Leer ruta', '2026-11-01', todayJobs);
-  assert.equal(readCmd.intent, 'READ_ROUTE');
-
-  const navCmd = parseVoiceCommand('Ir a clientes', '2026-11-01', todayJobs);
-  assert.equal(navCmd.intent, 'NAVIGATE_VIEW');
-  assert.equal(navCmd.targetView, 'clientes');
-});
-
-test('buildDailyRouteSpeechText and buildStopSpeechText generate comprehensive Spanish voice readout scripts', () => {
-  const todayJobs = INITIAL_TODAY_JOBS.filter(
-    (j) => j.scheduledDate === '2026-11-01'
-  );
-  const weather = getWeatherForDate('2026-11-01', 'Venado Tuerto');
-
-  const dailyScript = buildDailyRouteSpeechText(
-    '2026-11-01',
-    'Venado Tuerto, Santa Fe',
-    todayJobs,
-    weather
-  );
-  assert.ok(dailyScript.includes('Venado Tuerto'));
-  assert.ok(dailyScript.includes('5 cortes'));
-  assert.ok(dailyScript.includes('próxima parada'));
-
-  const stopScript = buildStopSpeechText(todayJobs[1], 42000);
-  assert.ok(stopScript.includes(todayJobs[1].clientName));
-  assert.ok(stopScript.includes(todayJobs[1].address));
-  assert.ok(stopScript.includes('42.000'));
 });
 
 test('updateInvoiceRecordInState, updateOperationalExpenseInState, and updateEquipmentItemInState update records and sync state', () => {
@@ -567,8 +550,3 @@ test('sanitizeText, buildSafeWhatsAppUrl, and sanitizeAndValidateBackupPayload e
   assert.equal(sanitized?.invoices?.[0].amount, 500);
   assert.equal(sanitized?.invoices?.[0].photoUrl, undefined);
 });
-
-
-
-
-

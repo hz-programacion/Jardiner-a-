@@ -41,17 +41,24 @@ import {
   calculateSuggestedPrice,
   computeNextCutDate,
   getClientPriceHistory,
+  getTodayIsoLocal,
+  resolveCityCoordinates,
 } from '../utils/lawnLogic';
 import { CITY_PRESETS, NEIGHBORHOOD_COORDINATES } from '../data/seedData';
-import { StreetAddressAutocomplete } from './StreetAddressAutocomplete';
-import { downloadReceiptAsPng } from '../utils/receiptPrinter';
-import { SpeakButton, VoiceDictationButton } from './AccessibilityVoiceBar';
 import {
-  VISUAL_TASK_PRESETS,
-  buildReceiptSpeech,
-  formatSpokenPesos,
-  speakTextInSpanish,
-} from '../utils/accessibilityAndVoice';
+  CityAutocomplete,
+  StreetAddressAutocomplete,
+} from './StreetAddressAutocomplete';
+import { downloadReceiptAsPng } from '../utils/receiptPrinter';
+
+const TASK_QUICK_PRESETS = [
+  { id: 'corte', shortTitle: 'Corte Césped', taskText: 'Corte de césped' },
+  { id: 'bordeado', shortTitle: 'Bordeado', taskText: 'Bordeado perimetral' },
+  { id: 'embolsado', shortTitle: 'Embolsado', taskText: 'Embolsado de pasto' },
+  { id: 'desmalezado', shortTitle: 'Desmalezado', taskText: 'Desmalezado pesado' },
+  { id: 'cerco', shortTitle: 'Poda Cerco', taskText: 'Recorte de cerco vivo' },
+  { id: 'vereda', shortTitle: 'Barrido Vereda', taskText: 'Soplado y barrido de vereda' },
+];
 
 const SAMPLE_COMPLETED_LAWN_SVG =
   'data:image/svg+xml;utf8,' +
@@ -181,16 +188,6 @@ export function CompleteJobModal({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <SpeakButton
-              text={`Cobrar corte de ${job.clientName}, en ${job.address}. Monto a cobrar hoy: ${formatSpokenPesos(
-                Number(finalPrice) || job.price
-              )}. ${
-                clientHistory.lastAmount
-                  ? `Último cobro anterior: ${formatSpokenPesos(clientHistory.lastAmount)}.`
-                  : 'Es su primer corte.'
-              }`}
-              label="🔊 Escuchar"
-            />
             <button
               type="button"
               onClick={onClose}
@@ -371,36 +368,30 @@ export function CompleteJobModal({
 
           <div>
             <span className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Estado del Cobro (Tocá una opción)
+              Estado del Cobro
             </span>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setPaidNow(true);
-                  speakTextInSpanish('Cobrado ahora mismo');
-                }}
+                onClick={() => setPaidNow(true)}
                 className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-extrabold border transition-colors whitespace-nowrap ${
                   paidNow
                     ? 'bg-emerald-700 text-white border-emerald-700'
                     : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                 }`}
               >
-                💵 Cobrado Ahora
+                Cobrado Ahora
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setPaidNow(false);
-                  speakTextInSpanish('Dejar pendiente en cuenta corriente');
-                }}
+                onClick={() => setPaidNow(false)}
                 className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-extrabold border transition-colors whitespace-nowrap ${
                   !paidNow
                     ? 'bg-amber-600 text-white border-amber-600'
                     : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                 }`}
               >
-                ⏳ Quedó Debiendo
+                Pendiente / Cuenta Corriente
               </button>
             </div>
           </div>
@@ -411,30 +402,26 @@ export function CompleteJobModal({
                 htmlFor="payment-method-select"
                 className="block text-xs font-semibold text-slate-700 mb-1.5"
               >
-                Medio de Pago Recibido (Con Dibujos)
+                Medio de Pago Recibido
               </label>
               <div className="grid grid-cols-3 gap-2 mb-2">
                 {(
                   [
-                    { id: 'Efectivo', emoji: '💵', label: 'Efectivo' },
-                    { id: 'Transferencia', emoji: '📲', label: 'Transferencia' },
-                    { id: 'MercadoPago', emoji: '📱', label: 'MercadoPago' },
+                    { id: 'Efectivo', label: 'Efectivo' },
+                    { id: 'Transferencia', label: 'Transferencia' },
+                    { id: 'MercadoPago', label: 'MercadoPago' },
                   ] as const
                 ).map((pm) => (
                   <button
                     key={pm.id}
                     type="button"
-                    onClick={() => {
-                      setPaymentMethod(pm.id);
-                      speakTextInSpanish(`Pago con ${pm.label}`);
-                    }}
-                    className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold border flex flex-col items-center justify-center gap-0.5 transition-all ${
+                    onClick={() => setPaymentMethod(pm.id)}
+                    className={`min-h-[40px] py-2 px-2 rounded-xl text-xs font-bold border flex items-center justify-center transition-all ${
                       paymentMethod === pm.id
                         ? 'bg-[#0B2219] text-white border-[#0B2219]'
                         : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <span className="text-base">{pm.emoji}</span>
                     <span>{pm.label}</span>
                   </button>
                 ))}
@@ -448,10 +435,10 @@ export function CompleteJobModal({
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
               >
                 <option value="Transferencia">
-                  📲 Transferencia Bancaria / Alias ({paymentProfile?.alias || 'pastopro.venado'})
+                  Transferencia Bancaria / Alias ({paymentProfile?.alias || 'mi.alias.cobro'})
                 </option>
-                <option value="Efectivo">💵 Efectivo en mano</option>
-                <option value="MercadoPago">📱 MercadoPago</option>
+                <option value="Efectivo">Efectivo en mano</option>
+                <option value="MercadoPago">MercadoPago</option>
               </select>
             </div>
           )}
@@ -726,7 +713,7 @@ export function ClientFormModal({
   isOpen,
   editingClient,
   prefillData,
-  defaultDate = '2026-11-01',
+  defaultDate = getTodayIsoLocal(),
   defaultTime = '08:30',
   baseLocation,
   businessProfile,
@@ -737,7 +724,7 @@ export function ClientFormModal({
   const [clientName, setClientName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [neighborhood, setNeighborhood] = useState('Mi Ciudad / Base Actual');
+  const [neighborhood, setNeighborhood] = useState(baseLocation.city);
   const [customTown, setCustomTown] = useState('');
   const [selectedCoordinates, setSelectedCoordinates] = useState<LatLng | null>(
     null
@@ -758,7 +745,7 @@ export function ClientFormModal({
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    setScheduledDate(defaultDate || '2026-11-01');
+    setScheduledDate(defaultDate || getTodayIsoLocal());
     setScheduledTime(defaultTime || '08:30');
   }, [defaultDate, defaultTime, isOpen]);
 
@@ -767,13 +754,8 @@ export function ClientFormModal({
       setClientName(editingClient.clientName);
       setPhone(editingClient.phone);
       setAddress(editingClient.address);
-      if (NEIGHBORHOOD_COORDINATES[editingClient.neighborhood]) {
-        setNeighborhood(editingClient.neighborhood);
-        setCustomTown('');
-      } else {
-        setNeighborhood('Otra Localidad / Barrio');
-        setCustomTown(editingClient.neighborhood);
-      }
+      setNeighborhood(editingClient.neighborhood || baseLocation.city);
+      setCustomTown('');
       setPropertyType(editingClient.propertyType);
       setAreaSqm(String(editingClient.areaSqm));
       setGrassCondition(editingClient.grassCondition || 'Regular');
@@ -788,9 +770,7 @@ export function ClientFormModal({
       setClientName(prefillData.clientName || '');
       setPhone(prefillData.phone || '');
       setAddress(prefillData.address || '');
-      setNeighborhood(
-        prefillData.neighborhood || 'Mi Ciudad / Base Actual'
-      );
+      setNeighborhood(prefillData.neighborhood || baseLocation.city);
       setCustomTown('');
       setPropertyType(prefillData.propertyType || 'Casa');
       setAreaSqm(String(prefillData.areaSqm || 350));
@@ -806,7 +786,7 @@ export function ClientFormModal({
       setClientName('');
       setPhone('');
       setAddress('');
-      setNeighborhood('Mi Ciudad / Base Actual');
+      setNeighborhood(baseLocation.city);
       setCustomTown('');
       setPropertyType('Casa');
       setAreaSqm('350');
@@ -819,7 +799,7 @@ export function ClientFormModal({
       setShouldSchedule(true);
       setErrorMsg('');
     }
-  }, [editingClient, prefillData, isOpen]);
+  }, [editingClient, prefillData, isOpen, baseLocation.city]);
 
   if (!isOpen) return null;
 
@@ -854,15 +834,15 @@ export function ClientFormModal({
     }
 
     const finalNeighborhood =
-      neighborhood === 'Mi Ciudad / Base Actual'
-        ? `${baseLocation.city} - Centro`
-        : neighborhood === 'Otra Localidad / Barrio' && customTown.trim()
-        ? customTown.trim()
-        : neighborhood;
+      !neighborhood.trim() || neighborhood === 'Mi Ciudad / Base Actual'
+        ? baseLocation.city
+        : customTown.trim() || neighborhood.trim();
 
-    // Take coordinates dynamically from active baseLocation if in same city or custom, else preset
+    const resolvedCityInfo = resolveCityCoordinates(finalNeighborhood);
     const baseCoords =
-      NEIGHBORHOOD_COORDINATES[finalNeighborhood] || baseLocation.coordinates;
+      NEIGHBORHOOD_COORDINATES[finalNeighborhood] ||
+      resolvedCityInfo.coordinates ||
+      baseLocation.coordinates;
     const offsetLat = ((address.length % 7) - 3) * 0.0024;
     const offsetLng = ((clientName.length % 7) - 3) * 0.0024;
 
@@ -940,7 +920,7 @@ export function ClientFormModal({
       aria-modal="true"
       aria-labelledby="client-modal-title"
     >
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-xl my-8">
+      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 shadow-xl my-6">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
             <h2
@@ -990,19 +970,7 @@ export function ClientFormModal({
                     setClientName(e.target.value);
                     setErrorMsg('');
                   }}
-                  className="w-full flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                />
-                <VoiceDictationButton
-                  fieldLabel="el nombre del cliente"
-                  onTranscript={(txt) => {
-                    setClientName(txt);
-                    setErrorMsg('');
-                  }}
-                  quickOptions={[
-                    { emoji: '🏠', label: 'Vecino Casa Nueva', value: 'Vecino Casa Nueva' },
-                    { emoji: '🌳', label: 'Dueño de Quinta', value: 'Dueño de Quinta' },
-                    { emoji: '🌾', label: 'Dueño de Lote / Terreno', value: 'Dueño de Lote' },
-                  ]}
+                  className="w-full flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-600"
                 />
               </div>
             </div>
@@ -1020,17 +988,31 @@ export function ClientFormModal({
                 placeholder="+54 9 3462 554433"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
+              <CityAutocomplete
+                id="client-neighborhood-select"
+                label="Ciudad / Localidad (Toda Argentina)"
+                placeholder="Escribe ej: Venado, Rosario, Funes, Pilar..."
+                value={neighborhood}
+                onChange={(val) => setNeighborhood(val)}
+                onSelectCity={(sug) => {
+                  setNeighborhood(sug.fullName);
+                  setSelectedCoordinates(sug.coordinates);
+                }}
+              />
+            </div>
+
+            <div>
               <StreetAddressAutocomplete
                 id="client-address-input"
                 value={address}
-                activeCity={baseLocation.city}
+                activeCity={neighborhood || baseLocation.city}
                 existingProperties={existingProperties}
                 onChange={(val) => {
                   setAddress(val);
@@ -1039,64 +1021,14 @@ export function ClientFormModal({
                 onSelectSuggestion={(sug) => {
                   setAddress(sug.streetAddress);
                   setSelectedCoordinates(sug.coordinates);
-                  if (NEIGHBORHOOD_COORDINATES[sug.neighborhood]) {
-                    setNeighborhood(sug.neighborhood);
-                    setCustomTown('');
-                  } else {
-                    setNeighborhood('Otra Localidad / Barrio');
-                    setCustomTown(sug.neighborhood);
+                  if (sug.city) {
+                    setNeighborhood(sug.city);
                   }
                   setErrorMsg('');
                 }}
               />
             </div>
-
-            <div>
-              <label
-                htmlFor="client-neighborhood-select"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Ciudad / Barrio (Dinámico según tu Base)
-              </label>
-              <select
-                id="client-neighborhood-select"
-                value={neighborhood}
-                onChange={(e) => setNeighborhood(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              >
-                <option value="Mi Ciudad / Base Actual">
-                  📍 En mi ciudad actual ({baseLocation.city})
-                </option>
-                {Object.keys(NEIGHBORHOOD_COORDINATES).map((zone) => (
-                  <option key={zone} value={zone}>
-                    {zone}
-                  </option>
-                ))}
-                <option value="Otra Localidad / Barrio">
-                  Escribir otro barrio o localidad...
-                </option>
-              </select>
-            </div>
           </div>
-
-          {neighborhood === 'Otra Localidad / Barrio' && (
-            <div>
-              <label
-                htmlFor="custom-town-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Especificar Ciudad, Pueblo o Barrio
-              </label>
-              <input
-                id="custom-town-input"
-                type="text"
-                placeholder={`Ej. ${baseLocation.city} - Barrio Norte, Teodelina, Chovet...`}
-                value={customTown}
-                onChange={(e) => setCustomTown(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </div>
-          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
@@ -1275,28 +1207,16 @@ export function ClientFormModal({
               htmlFor="access-notes-input"
               className="block text-xs font-semibold text-slate-700 mb-1"
             >
-              🔑 Notas de Acceso / Portón / Mascotas (Podés hablar o elegir un dibujo)
+              Notas de Acceso / Portón / Mascotas
             </label>
-            <div className="flex items-center gap-1.5">
-              <input
-                id="access-notes-input"
-                type="text"
-                placeholder="Ej. Candado clave 1234, perro en patio trasero, tranquera blanca"
-                value={accessNotes}
-                onChange={(e) => setAccessNotes(e.target.value)}
-                className="w-full flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              />
-              <VoiceDictationButton
-                fieldLabel="cómo entrar al lote"
-                onTranscript={(txt) => setAccessNotes(txt)}
-                quickOptions={[
-                  { emoji: '🔑', label: 'Portón abierto sin llave', value: 'Portón abierto sin llave' },
-                  { emoji: '🐕', label: 'Cuidado: hay perro en el patio', value: 'Cuidado: hay perro en el patio' },
-                  { emoji: '🔔', label: 'Tocar timbre o golpear manos', value: 'Tocar timbre o golpear manos al llegar' },
-                  { emoji: '🚜', label: 'Entrada ancha para tractor / carro', value: 'Entrada lateral ancha para las máquinas' },
-                ]}
-              />
-            </div>
+            <input
+              id="access-notes-input"
+              type="text"
+              placeholder="Ej. Candado clave 1234, perro en patio trasero, tranquera blanca"
+              value={accessNotes}
+              onChange={(e) => setAccessNotes(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            />
           </div>
 
           <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
@@ -1369,7 +1289,7 @@ export function ScheduleJobModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setScheduledDate(defaultDate || '2026-11-01');
+    setScheduledDate(defaultDate || getTodayIsoLocal());
     setScheduledTime(defaultTime || '08:30');
     const initialProp =
       properties.find((p) => p.id === preselectedPropertyId) ||
@@ -1622,7 +1542,7 @@ export function BaseLocationModal({
     e.preventDefault();
     const parsedLat = Number(lat) || currentBase.coordinates.lat;
     const parsedLng = Number(lng) || currentBase.coordinates.lng;
-    const safeCity = (city || '').trim() || 'Venado Tuerto';
+    const safeCity = (city || '').trim() || currentBase.city || 'Rosario, Santa Fe';
     const safeAddress = (address || '').trim() || 'Centro';
     onSaveBaseLocation({
       name: `Base Operativa (${safeCity})`,
@@ -1699,54 +1619,35 @@ export function BaseLocationModal({
             </button>
           </div>
 
-          {/* Opción 2: Elegir Ciudad / Pueblo Rápido */}
-          <div>
-            <span className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Ciudades y Pueblos Frecuentes (1 clic):
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {Object.keys(CITY_PRESETS).map((presetCity) => (
-                <button
-                  key={presetCity}
-                  type="button"
-                  onClick={() => handleSelectPreset(presetCity)}
-                  className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap ${
-                    city === presetCity
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {presetCity}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Opción 3: Formulario Manual de Ciudad, Barrio o Calle */}
+          {/* Opción 2: Buscador Predictivo de Ciudades y Calles de toda Argentina */}
           <form onSubmit={handleSubmit} className="space-y-3 pt-2 border-t border-slate-200">
+            <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 text-xs text-teal-950">
+              Escribe las primeras letras de tu ciudad o localidad (por ejemplo{' '}
+              <strong>"Venado"</strong> →{' '}
+              <strong>"Venado Tuerto, Santa Fe"</strong>) para autocompletar el
+              nombre oficial y coordenadas GPS.
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label
-                  htmlFor="base-city-input"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Ciudad o Pueblo Base
-                </label>
-                <input
+                <CityAutocomplete
                   id="base-city-input"
-                  type="text"
+                  label="Ciudad o Localidad Base (Argentina)"
+                  placeholder="Escribe ej: Venado, Rosario, Córdoba, Pilar..."
                   value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="Ej. Venado Tuerto, Firmat, Córdoba..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  required
+                  onChange={(val) => setCity(val)}
+                  onSelectCity={(sug) => {
+                    setCity(sug.fullName);
+                    setAddress(sug.defaultAddress);
+                    setLat(String(sug.coordinates.lat));
+                    setLng(String(sug.coordinates.lng));
+                  }}
                 />
               </div>
               <div>
                 <StreetAddressAutocomplete
                   id="base-address-input"
                   label="Dirección / Calle / Punto de Salida"
-                  placeholder="Ej. Bv. 25 de Mayo 850 o Estación YPF Ruta 8"
+                  placeholder="Ej. Bv. 25 de Mayo 850 o Av. Pellegrini 1500"
                   value={address}
                   activeCity={city}
                   onChange={(val) => setAddress(val)}
@@ -2003,12 +1904,13 @@ export function InvoiceReceiptModal({
   const brandSlogan =
     businessProfile?.slogan || 'Mantenimiento de Parques, Quintas y Lotes';
   const ownerPhone = businessProfile?.ownerPhone || '';
-  const aliasText = paymentProfile?.alias || 'pastopro.venado';
+  const aliasText = paymentProfile?.alias || 'mi.alias.cobro';
   const holderText =
     businessProfile?.ownerName ||
     paymentProfile?.holderName ||
-    'Diego Hernández';
-  const bankText = paymentProfile?.bankName || 'Banco Santa Fe / MercadoPago';
+    'Titular del Servicio';
+  const bankText =
+    paymentProfile?.bankName || 'Mercado Pago / Transferencia Bancaria';
 
   const whatsappText = `Hola ${invoice.clientName}, te envío el comprobante ${invoice.invoiceNumber} de ${brandName} por el servicio de corte y mantenimiento en ${invoice.address} (${invoice.areaSqm} m²).
 • Total: $${invoice.amount.toLocaleString('es-AR')} (${invoice.status})
@@ -2078,10 +1980,6 @@ export function InvoiceReceiptModal({
             </div>
           </div>
           <div className="no-print flex items-center gap-1.5 shrink-0">
-            <SpeakButton
-              text={buildReceiptSpeech(invoice)}
-              label="🔊 Escuchar Recibo"
-            />
             <button
               type="button"
               onClick={onClose}
@@ -2155,15 +2053,33 @@ export function InvoiceReceiptModal({
             </ul>
           </div>
 
-          {/* Datos Bancarios / Alias para Transferencia */}
-          <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs space-y-1">
-            <div className="font-bold text-emerald-950 flex items-center justify-between">
+          {/* Datos Bancarios / Alias para Transferencia — Sin desborde de CBU al imprimir */}
+          <div className="p-3.5 bg-teal-50/70 border border-teal-200 rounded-xl text-xs space-y-1.5 overflow-hidden">
+            <div className="font-bold text-teal-950 flex flex-wrap items-center justify-between gap-2">
               <span>Datos para Transferencia / MercadoPago</span>
-              <span className="font-mono text-emerald-800">{aliasText}</span>
+              <span className="font-mono text-teal-800 bg-white px-2 py-0.5 rounded border border-teal-200 break-all">
+                Alias: {aliasText}
+              </span>
             </div>
-            <div className="text-slate-600 font-mono text-[11px]">
-              Titular: {holderText} · {bankText}
-              {paymentProfile?.cbu ? ` · CBU: ${paymentProfile.cbu}` : ''}
+            <div className="grid grid-cols-1 gap-1 text-slate-700 font-mono text-[11px] pt-1 border-t border-teal-200/60">
+              <div className="break-words">
+                <span className="font-semibold text-slate-900">Titular:</span>{' '}
+                {holderText} · {bankText}
+              </div>
+              {paymentProfile?.cbu && (
+                <div className="break-all">
+                  <span className="font-semibold text-slate-900">
+                    CBU / CVU:
+                  </span>{' '}
+                  {paymentProfile.cbu}
+                </div>
+              )}
+              {paymentProfile?.cuit && (
+                <div className="break-all">
+                  <span className="font-semibold text-slate-900">CUIT:</span>{' '}
+                  {paymentProfile.cuit}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2489,10 +2405,10 @@ export function EditScheduledJobModal({
           <div className="space-y-3">
             <div>
               <span className="block text-xs font-bold text-slate-800 mb-1.5">
-                🌿 Elegir Tareas con Dibujos (Tocá para sumar o quitar sin escribir):
+                Tareas Incluidas en la Visita:
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
-                {VISUAL_TASK_PRESETS.map((preset) => {
+                {TASK_QUICK_PRESETS.map((preset) => {
                   const active =
                     tasksText
                       .toLowerCase()
@@ -2518,20 +2434,17 @@ export function EditScheduledJobModal({
                               t.toLowerCase() !== preset.taskText.toLowerCase()
                           );
                           setTasksText(filtered.join(', '));
-                          speakTextInSpanish(`Quitado: ${preset.shortTitle}`);
                         } else {
                           const updated = [...currentList, preset.taskText];
                           setTasksText(updated.join(', '));
-                          speakTextInSpanish(preset.spokenText);
                         }
                       }}
-                      className={`min-h-[44px] p-2 rounded-xl border text-left flex items-center gap-2 text-xs font-extrabold transition-all ${
+                      className={`min-h-[38px] p-2 rounded-xl border text-left flex items-center justify-center text-xs font-semibold transition-all ${
                         active
                           ? 'bg-emerald-700 text-white border-emerald-900 shadow-2xs'
-                          : `${preset.colorClass} hover:opacity-90`
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                       }`}
                     >
-                      <span className="text-lg shrink-0">{preset.emoji}</span>
                       <span className="leading-tight">{preset.shortTitle}</span>
                     </button>
                   );
@@ -2552,26 +2465,15 @@ export function EditScheduledJobModal({
                 htmlFor="edit-job-notes-input"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                🔑 Nota de Acceso / Portón (Podés hablar o elegir dibujo)
+                Nota de Acceso / Portón
               </label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  id="edit-job-notes-input"
-                  type="text"
-                  value={accessNotes}
-                  onChange={(e) => setAccessNotes(e.target.value)}
-                  className="w-full flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-                <VoiceDictationButton
-                  fieldLabel="la nota de acceso"
-                  onTranscript={(txt) => setAccessNotes(txt)}
-                  quickOptions={[
-                    { emoji: '🔑', label: 'Portón sin llave', value: 'Portón abierto sin llave' },
-                    { emoji: '🐕', label: 'Cuidado con el perro', value: 'Cuidado: hay perro en el patio' },
-                    { emoji: '🔔', label: 'Tocar timbre fuerte', value: 'Tocar timbre fuerte al llegar' },
-                  ]}
-                />
-              </div>
+              <input
+                id="edit-job-notes-input"
+                type="text"
+                value={accessNotes}
+                onChange={(e) => setAccessNotes(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+              />
             </div>
           </div>
 
@@ -2675,10 +2577,10 @@ export function OfflineQueueAndAliasModal({
   const handleSaveAlias = (e: React.FormEvent) => {
     e.preventDefault();
     onSavePaymentProfile({
-      alias: alias.trim() || 'pastopro.venado',
+      alias: alias.trim() || 'mi.alias.cobro',
       cbu: cbu.trim(),
-      holderName: holderName.trim() || 'Diego Hernández',
-      bankName: bankName.trim() || 'Banco Santa Fe / MercadoPago',
+      holderName: holderName.trim() || 'Titular del Servicio',
+      bankName: bankName.trim() || 'Mercado Pago / Transferencia Bancaria',
     });
   };
 
@@ -2850,7 +2752,7 @@ export function OfflineQueueAndAliasModal({
                 type="text"
                 value={alias}
                 onChange={(e) => setAlias(e.target.value)}
-                placeholder="Ej. pastopro.venado"
+                placeholder="Ej. mi.empresa.mp"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
               />
             </div>
@@ -2867,7 +2769,7 @@ export function OfflineQueueAndAliasModal({
                 type="text"
                 value={holderName}
                 onChange={(e) => setHolderName(e.target.value)}
-                placeholder="Ej. Diego Hernández"
+                placeholder="Ej. Martín Gómez"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
               />
             </div>
@@ -2884,7 +2786,7 @@ export function OfflineQueueAndAliasModal({
                 type="text"
                 value={bankName}
                 onChange={(e) => setBankName(e.target.value)}
-                placeholder="Ej. Banco Santa Fe / MercadoPago"
+                placeholder="Ej. Mercado Pago / Banco Nación"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
               />
             </div>
@@ -2959,7 +2861,7 @@ export function EditInvoiceModal({
     if (invoice) {
       setClientName(invoice.clientName);
       setAddress(invoice.address);
-      setNeighborhood(invoice.neighborhood || 'Venado Tuerto');
+      setNeighborhood(invoice.neighborhood || 'Zona Centro');
       setDate(invoice.date);
       setAmount(String(invoice.amount));
       setStatus(invoice.status);
@@ -3287,22 +3189,22 @@ export function BusinessProfileModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanAppName = appName.trim() || 'PastoPro';
-    const cleanOwner = ownerName.trim() || 'Diego Hernández';
+    const cleanAppName = appName.trim() || 'Mi Empresa de Jardinería';
+    const cleanOwner = ownerName.trim() || 'Titular del Servicio';
     onSaveBusinessAndPayment(
       {
         appName: cleanAppName,
         slogan:
           slogan.trim() || 'Mantenimiento de Parques, Quintas y Terrenos',
         ownerName: cleanOwner,
-        ownerPhone: ownerPhone.trim() || '3462-558899',
+        ownerPhone: ownerPhone.trim(),
         baseRatePerSqm: Math.max(15, Number(baseRatePerSqm) || 65),
         minServicePrice: Math.max(3000, Number(minServicePrice) || 18000),
       },
       {
-        alias: alias.trim() || 'pastopro.venado',
+        alias: alias.trim() || 'mi.alias.cobro',
         holderName: cleanOwner,
-        bankName: bankName.trim() || 'Banco Santa Fe / MercadoPago',
+        bankName: bankName.trim() || 'Mercado Pago / Transferencia Bancaria',
         cbu: cbu.trim(),
       }
     );
@@ -3352,20 +3254,14 @@ export function BusinessProfileModal({
               >
                 Nombre de la Aplicación / Tu Emprendimiento
               </label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="business-app-name-input"
-                  type="text"
-                  value={appName}
-                  onChange={(e) => setAppName(e.target.value)}
-                  placeholder="Ej. Cortes El Trébol, Jardinería Hernández..."
-                  className="w-full px-3 py-2 text-sm font-bold text-slate-900 bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                />
-                <VoiceDictationButton
-                  fieldLabel="el nombre de tu emprendimiento"
-                  onTranscript={(txt) => setAppName(txt)}
-                />
-              </div>
+              <input
+                id="business-app-name-input"
+                type="text"
+                value={appName}
+                onChange={(e) => setAppName(e.target.value)}
+                placeholder="Ej. Parques del Sur, Jardinería Integral..."
+                className="w-full px-3 py-2 text-sm font-bold text-slate-900 bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              />
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
                 <span className="text-[11px] text-slate-500 font-semibold">
                   Ejemplos rápidos:
@@ -3414,7 +3310,7 @@ export function BusinessProfileModal({
                 type="text"
                 value={ownerName}
                 onChange={(e) => setOwnerName(e.target.value)}
-                placeholder="Ej. Diego Hernández"
+                placeholder="Ej. Martín Gómez"
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
               />
             </div>

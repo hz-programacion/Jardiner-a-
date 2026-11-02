@@ -1,5 +1,6 @@
-import { CITY_PRESETS } from '../data/seedData';
+import { ARGENTINA_CITIES_CATALOG, CITY_PRESETS } from '../data/seedData';
 import {
+  ApprovalStatus,
   BaseLocationConfig,
   BusinessProfileConfig,
   ClientProperty,
@@ -10,13 +11,54 @@ import {
   ScheduledJob,
   SubscriptionPlanId,
   TenantSubscriptionConfig,
+  UserRole,
 } from '../types/lawn';
+import { getTodayIsoLocal, normalizeSearchText } from './lawnLogic';
+
+/**
+ * Primary Administrator Email protected across Auth, UI, and Cloud Firestore Security Rules.
+ */
+export const PRIMARY_ADMIN_EMAIL = 'hz.mdiego@gmail.com';
+
+/**
+ * Mandatory blocking message shown to authenticated users whose account has not yet been approved by the Administrator.
+ */
+export const PENDING_APPROVAL_BLOCK_MESSAGE =
+  'Cuenta pendiente de validación de pago. Por favor, comunícate con el administrador para activar tu licencia de acceso único.';
+
+export function isPrimaryAdminEmail(email?: string | null): boolean {
+  if (!email || typeof email !== 'string') return false;
+  return email.trim().toLowerCase() === PRIMARY_ADMIN_EMAIL.toLowerCase();
+}
+
+export function getInitialAccessApprovalState(email?: string | null): {
+  isApproved: boolean;
+  approvalStatus: ApprovalStatus;
+  role: UserRole;
+} {
+  if (isPrimaryAdminEmail(email)) {
+    return {
+      isApproved: true,
+      approvalStatus: 'approved',
+      role: 'admin',
+    };
+  }
+  return {
+    isApproved: false,
+    approvalStatus: 'pending',
+    role: 'user',
+  };
+}
 
 export interface TenantWorkspaceBundle {
   businessProfile: BusinessProfileConfig;
   baseLocation: BaseLocationConfig;
   paymentProfile: PaymentProfileConfig;
   subscription: TenantSubscriptionConfig;
+  isApproved: boolean;
+  approvalStatus: ApprovalStatus;
+  role: UserRole;
+  registeredAt: string;
   properties: ClientProperty[];
   todayJobs: ScheduledJob[];
   invoices: InvoiceRecord[];
@@ -24,10 +66,9 @@ export interface TenantWorkspaceBundle {
   equipment: EquipmentItem[];
 }
 
-export const DEFAULT_SAAS_SUBSCRIPTION_PRICES = {
-  monthlyPriceArs: 18500,
-  annualPriceArs: 185000,
-  installedLicensePriceArs: 240000,
+export const DEFAULT_SINGLE_LICENSE_CONFIG = {
+  singleLicensePriceArs: 85000,
+  defaultMpCheckoutUrl: 'https://mpago.la/2xPastoProLicenciaUnica',
 };
 
 /**
@@ -46,37 +87,132 @@ export function getTenantStorageKey(
 }
 
 /**
- * Builds a default 14-day free trial subscription configuration for a new tenant.
+ * Builds a default evaluation period configuration for a new tenant
+ * before activating their One-Time Payment License (Licencia de Pago Único).
  */
 export function createInitialSubscriptionConfig(
-  nowIso = '2026-11-01T12:00:00.000Z'
+  nowIso = new Date().toISOString()
 ): TenantSubscriptionConfig {
   const startDate = new Date(nowIso);
   const safeStart = Number.isNaN(startDate.getTime())
-    ? new Date('2026-11-01T12:00:00.000Z')
+    ? new Date()
     : startDate;
   const trialEnd = new Date(safeStart.getTime() + 14 * 24 * 60 * 60 * 1000);
 
   return {
-    planId: 'trial',
+    planId: 'evaluation',
     status: 'trialing',
     trialStartedAt: safeStart.toISOString().slice(0, 10),
     trialEndsAt: trialEnd.toISOString().slice(0, 10),
-    mpPreapprovalPlanId: '2c9380848e9b1d4a018ea2f9c020014b',
-    mpCheckoutUrl: '',
-    sellerWhatsapp: '+54 9 3462 55-1234',
-    monthlyPriceArs: DEFAULT_SAAS_SUBSCRIPTION_PRICES.monthlyPriceArs,
-    annualPriceArs: DEFAULT_SAAS_SUBSCRIPTION_PRICES.annualPriceArs,
-    installedLicensePriceArs:
-      DEFAULT_SAAS_SUBSCRIPTION_PRICES.installedLicensePriceArs,
+    mpCheckoutUrl: DEFAULT_SINGLE_LICENSE_CONFIG.defaultMpCheckoutUrl,
+    sellerWhatsapp: '+54 9 3462 458910',
+    singleLicensePriceArs: DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs,
     paymentHistory: [],
   };
 }
 
 /**
+ * Normalizes any legacy stored license/subscription object into the strict
+ * One-Time Payment License structure without recurring plans.
+ */
+export function normalizeTenantLicenseConfig(
+  raw?: Partial<TenantSubscriptionConfig> & Record<string, unknown>
+): TenantSubscriptionConfig {
+  const base = createInitialSubscriptionConfig();
+  if (!raw || typeof raw !== 'object') {
+    return base;
+  }
+
+  const rawPlan = String(raw.planId || '');
+  const isActivated =
+    raw.status === 'active' ||
+    rawPlan === 'single_payment_license' ||
+    rawPlan === 'installed_license' ||
+    rawPlan === 'pro_annual' ||
+    rawPlan === 'pro_monthly';
+
+  return {
+    planId: isActivated ? 'single_payment_license' : 'evaluation',
+    status: isActivated
+      ? 'active'
+      : raw.status === 'expired'
+        ? 'expired'
+        : 'trialing',
+    trialStartedAt:
+      typeof raw.trialStartedAt === 'string' && raw.trialStartedAt
+        ? raw.trialStartedAt
+        : base.trialStartedAt,
+    trialEndsAt:
+      typeof raw.trialEndsAt === 'string' && raw.trialEndsAt
+        ? raw.trialEndsAt
+        : base.trialEndsAt,
+    activatedAt:
+      typeof raw.activatedAt === 'string' ? raw.activatedAt : undefined,
+    mpCheckoutUrl:
+      typeof raw.mpCheckoutUrl === 'string' && raw.mpCheckoutUrl.trim()
+        ? raw.mpCheckoutUrl.trim()
+        : base.mpCheckoutUrl,
+    sellerWhatsapp:
+      typeof raw.sellerWhatsapp === 'string' && raw.sellerWhatsapp.trim()
+        ? raw.sellerWhatsapp.trim()
+        : base.sellerWhatsapp,
+    singleLicensePriceArs:
+      typeof raw.singleLicensePriceArs === 'number' &&
+      raw.singleLicensePriceArs > 0
+        ? raw.singleLicensePriceArs
+        : base.singleLicensePriceArs,
+    licenseKey:
+      typeof raw.licenseKey === 'string' ? raw.licenseKey : undefined,
+    paymentHistory: Array.isArray(raw.paymentHistory)
+      ? raw.paymentHistory
+      : [],
+  };
+}
+
+/**
+ * Resolves a BaseLocationConfig from any Argentine city name or preset key.
+ */
+export function resolveBaseLocationFromCityInput(
+  cityInput?: string
+): BaseLocationConfig {
+  const clean = (cityInput || '').trim();
+  if (clean && CITY_PRESETS[clean]) {
+    return CITY_PRESETS[clean];
+  }
+
+  const norm = normalizeSearchText(clean);
+  if (norm) {
+    const matchedCatalog = ARGENTINA_CITIES_CATALOG.find(
+      (c) =>
+        normalizeSearchText(c.fullName) === norm ||
+        normalizeSearchText(c.city) === norm ||
+        norm.includes(normalizeSearchText(c.city)) ||
+        normalizeSearchText(c.fullName).includes(norm)
+    );
+    if (matchedCatalog) {
+      return {
+        name: `Base Operativa (${matchedCatalog.city})`,
+        city: matchedCatalog.fullName,
+        address: matchedCatalog.defaultAddress,
+        coordinates: matchedCatalog.coordinates,
+        source: 'manual',
+      };
+    }
+  }
+
+  return {
+    name: `Base Operativa (${clean || 'Venado Tuerto, Santa Fe'})`,
+    city: clean || 'Venado Tuerto, Santa Fe',
+    address: clean ? `Centro, ${clean.split(',')[0].trim()}` : 'Av. Casey 450, Venado Tuerto',
+    coordinates: { lat: -33.7456, lng: -61.9688 },
+    source: 'manual',
+  };
+}
+
+/**
  * Creates a 100% clean, isolated workspace for a newly registered tenant
- * (e.g. a gardener in Rosario, Córdoba, or Buenos Aires) with zero clients
- * from the demo/creator account and their own city & brand defaults.
+ * with zero clients, zero jobs, zero invoices, zero expenses, and unapproved status by default
+ * (unless the user is the primary administrator hz.mdiego@gmail.com).
  */
 export function createBlankTenantWorkspace(params: {
   uid: string;
@@ -95,18 +231,9 @@ export function createBlankTenantWorkspace(params: {
     'Titular del Servicio';
 
   const resolvedAppName =
-    rawBusiness ||
-    (rawName ? `${rawName}` : 'Mi Empresa de Jardinería');
+    rawBusiness || (rawName ? `${rawName}` : 'Mi Empresa de Jardinería');
 
-  const resolvedCityPreset =
-    (params.cityPresetKey && CITY_PRESETS[params.cityPresetKey]) ||
-    CITY_PRESETS['Rosario, Santa Fe'] || {
-      name: 'Mi Base Operativa',
-      city: params.cityPresetKey || 'Rosario, Santa Fe',
-      address: 'Centro',
-      coordinates: { lat: -32.9442, lng: -60.6505 },
-      source: 'manual',
-    };
+  const resolvedCityPreset = resolveBaseLocationFromCityInput(params.cityPresetKey);
 
   const slugAlias = resolvedAppName
     .toLowerCase()
@@ -115,6 +242,9 @@ export function createBlankTenantWorkspace(params: {
     .replace(/[^a-z0-9]+/g, '.')
     .replace(/^\.+|\.+$/g, '')
     .slice(0, 20);
+
+  const todayIso = (params.nowIso || getTodayIsoLocal()).slice(0, 10);
+  const accessState = getInitialAccessApprovalState(params.email);
 
   const defaultEquipment: EquipmentItem[] = [
     {
@@ -125,7 +255,7 @@ export function createBlankTenantWorkspace(params: {
       hoursUsed: 0,
       serviceLimitHours: 25,
       nextTask: 'Cambio de aceite y afilado de cuchilla',
-      lastServiceDate: (params.nowIso || '2026-11-01').slice(0, 10),
+      lastServiceDate: todayIso,
     },
     {
       id: `eq-${params.uid.slice(0, 6)}-2`,
@@ -135,9 +265,19 @@ export function createBlankTenantWorkspace(params: {
       hoursUsed: 0,
       serviceLimitHours: 30,
       nextTask: 'Limpieza de filtro y engrase de cabezal',
-      lastServiceDate: (params.nowIso || '2026-11-01').slice(0, 10),
+      lastServiceDate: todayIso,
     },
   ];
+
+  const baseSub = createInitialSubscriptionConfig(params.nowIso);
+  const finalSubscription: TenantSubscriptionConfig = accessState.isApproved
+    ? activateTenantSingleLicense(
+        baseSub,
+        'Transferencia / Clave de Licencia',
+        'ADMIN-MASTER-KEY',
+        todayIso
+      )
+    : baseSub;
 
   return {
     businessProfile: {
@@ -165,7 +305,11 @@ export function createBlankTenantWorkspace(params: {
       cuit: '',
       mpPaymentLink: '',
     },
-    subscription: createInitialSubscriptionConfig(params.nowIso),
+    subscription: finalSubscription,
+    isApproved: accessState.isApproved,
+    approvalStatus: accessState.approvalStatus,
+    role: accessState.role,
+    registeredAt: params.nowIso || new Date().toISOString(),
     properties: [],
     todayJobs: [],
     invoices: [],
@@ -175,88 +319,72 @@ export function createBlankTenantWorkspace(params: {
 }
 
 /**
- * Evaluates subscription status, days remaining in trial, and human-readable badge text.
+ * Evaluates One-Time License status, days remaining in initial evaluation, and badge text.
  */
 export function evaluateSubscriptionStatus(
   subscription?: TenantSubscriptionConfig | null,
-  referenceDateStr = '2026-11-01'
+  referenceDateStr = getTodayIsoLocal()
 ): {
   planId: SubscriptionPlanId;
   planName: string;
-  status: 'trialing' | 'active' | 'past_due' | 'expired';
+  status: 'trialing' | 'active' | 'expired';
   daysRemaining: number;
   badgeText: string;
   isProActive: boolean;
 } {
-  const sub = subscription || createInitialSubscriptionConfig();
-  const refTime = new Date(`${referenceDateStr.slice(0, 10)}T12:00:00Z`).getTime();
+  const sub = normalizeTenantLicenseConfig(
+    (subscription || undefined) as
+      | (Partial<TenantSubscriptionConfig> & Record<string, unknown>)
+      | undefined
+  );
+  const refTime = new Date(
+    `${referenceDateStr.slice(0, 10)}T12:00:00Z`
+  ).getTime();
 
-  const planNames: Record<SubscriptionPlanId, string> = {
-    trial: 'Prueba Gratis 14 Días',
-    pro_monthly: 'Plan Pro Mensual (Mercado Pago)',
-    pro_annual: 'Plan Pro Anual (2 Meses Bonificados)',
-    installed_license: 'Licencia Comercial Instalada',
-  };
-
-  if (
-    sub.planId === 'pro_monthly' ||
-    sub.planId === 'pro_annual' ||
-    sub.planId === 'installed_license'
-  ) {
-    if (sub.status === 'active') {
-      const endStr = sub.currentPeriodEndsAt || '2027-11-01';
-      const endTime = new Date(`${endStr.slice(0, 10)}T12:00:00Z`).getTime();
-      const diffDays = Math.max(
-        0,
-        Math.ceil((endTime - refTime) / (1000 * 60 * 60 * 24))
-      );
-      return {
-        planId: sub.planId,
-        planName: planNames[sub.planId],
-        status: 'active',
-        daysRemaining: diffDays,
-        badgeText:
-          sub.planId === 'installed_license'
-            ? 'Licencia Activa'
-            : 'Plan Pro Activo',
-        isProActive: true,
-      };
-    }
+  if (sub.planId === 'single_payment_license' && sub.status === 'active') {
+    return {
+      planId: 'single_payment_license',
+      planName: 'Licencia Definitiva (Pago Único)',
+      status: 'active',
+      daysRemaining: 9999,
+      badgeText: 'Licencia Activa',
+      isProActive: true,
+    };
   }
 
   const trialEndTime = new Date(
-    `${(sub.trialEndsAt || '2026-11-15').slice(0, 10)}T12:00:00Z`
+    `${(sub.trialEndsAt || getTodayIsoLocal()).slice(0, 10)}T12:00:00Z`
   ).getTime();
-  const daysLeft = Math.ceil((trialEndTime - refTime) / (1000 * 60 * 60 * 24));
+  const daysLeft = Math.ceil(
+    (trialEndTime - refTime) / (1000 * 60 * 60 * 24)
+  );
 
   if (daysLeft <= 0) {
     return {
-      planId: 'trial',
-      planName: planNames.trial,
+      planId: 'evaluation',
+      planName: 'Licencia de Pago Único',
       status: 'expired',
       daysRemaining: 0,
-      badgeText: 'Prueba Vencida · Suscribirse',
+      badgeText: 'Pendiente de Activación',
       isProActive: false,
     };
   }
 
   return {
-    planId: 'trial',
-    planName: planNames.trial,
+    planId: 'evaluation',
+    planName: 'Evaluación Inicial (14 Días)',
     status: 'trialing',
     daysRemaining: daysLeft,
-    badgeText: `Prueba: ${daysLeft}d restantes`,
+    badgeText: `Evaluación: ${daysLeft}d`,
     isProActive: false,
   };
 }
 
 /**
- * Builds the official Mercado Pago Subscription Checkout URL from either a custom
- * checkout link or a Mercado Pago preapproval_plan_id.
+ * Builds the direct Mercado Pago Checkout Pro One-Time Payment URL.
  */
-export function buildMercadoPagoSubscriptionUrl(
+export function buildMercadoPagoSinglePaymentUrl(
   subscription: TenantSubscriptionConfig,
-  planId: SubscriptionPlanId = 'pro_monthly',
   payerEmail?: string | null
 ): string {
   const customUrl = (subscription.mpCheckoutUrl || '').trim();
@@ -264,86 +392,61 @@ export function buildMercadoPagoSubscriptionUrl(
     customUrl.startsWith('https://www.mercadopago.') ||
     customUrl.startsWith('https://mpago.la/')
   ) {
-    return customUrl;
+    if (!payerEmail) return customUrl;
+    const separator = customUrl.includes('?') ? '&' : '?';
+    return `${customUrl}${separator}payer_email=${encodeURIComponent(payerEmail)}`;
   }
 
-  const preapprovalId =
-    (subscription.mpPreapprovalPlanId || '').trim() ||
-    '2c9380848e9b1d4a018ea2f9c020014b';
-
-  const params = new URLSearchParams({
-    preapproval_plan_id: preapprovalId,
-    plan_tier: planId,
-  });
-  if (payerEmail) {
-    params.set('payer_email', payerEmail);
-  }
-  return `https://www.mercadopago.com.ar/subscriptions/checkout?${params.toString()}`;
+  const baseCheckout = DEFAULT_SINGLE_LICENSE_CONFIG.defaultMpCheckoutUrl;
+  if (!payerEmail) return baseCheckout;
+  return `${baseCheckout}?payer_email=${encodeURIComponent(payerEmail)}`;
 }
 
 /**
- * Activates a paid subscription plan (monthly, annual, or installed license)
- * and records the transaction in the tenant's billing history.
+ * Activates the One-Time Payment License (Licencia de Uso — Pago Único)
+ * and records the transaction in the tenant's payment history.
  */
-export function activateTenantSubscriptionPlan(
+export function activateTenantSingleLicense(
   currentSub: TenantSubscriptionConfig,
-  planId: Exclude<SubscriptionPlanId, 'trial'>,
-  method: 'Mercado Pago Suscripción' | 'Transferencia / Licencia',
+  method: 'Mercado Pago Pago Único' | 'Transferencia / Clave de Licencia',
   referenceCode?: string,
-  referenceDateStr = '2026-11-01'
+  referenceDateStr = getTodayIsoLocal()
 ): TenantSubscriptionConfig {
+  const normalized = normalizeTenantLicenseConfig(
+    currentSub as unknown as Partial<TenantSubscriptionConfig> &
+      Record<string, unknown>
+  );
   const baseDate = new Date(`${referenceDateStr.slice(0, 10)}T12:00:00Z`);
   const safeBase = Number.isNaN(baseDate.getTime())
-    ? new Date('2026-11-01T12:00:00Z')
+    ? new Date()
     : baseDate;
-
-  const daysToAdd =
-    planId === 'pro_monthly' ? 30 : planId === 'pro_annual' ? 365 : 3650;
-  const nextEnd = new Date(
-    safeBase.getTime() + daysToAdd * 24 * 60 * 60 * 1000
-  );
-
-  const amountByPlan: Record<Exclude<SubscriptionPlanId, 'trial'>, number> = {
-    pro_monthly:
-      currentSub.monthlyPriceArs ||
-      DEFAULT_SAAS_SUBSCRIPTION_PRICES.monthlyPriceArs,
-    pro_annual:
-      currentSub.annualPriceArs ||
-      DEFAULT_SAAS_SUBSCRIPTION_PRICES.annualPriceArs,
-    installed_license:
-      currentSub.installedLicensePriceArs ||
-      DEFAULT_SAAS_SUBSCRIPTION_PRICES.installedLicensePriceArs,
-  };
-
-  const labelByPlan: Record<Exclude<SubscriptionPlanId, 'trial'>, string> = {
-    pro_monthly: 'Suscripción Mensual PastoPro Cloud',
-    pro_annual: 'Suscripción Anual PastoPro Cloud (12 meses)',
-    installed_license: 'Licencia Comercial Instalada White-Label',
-  };
+  const dateStr = safeBase.toISOString().slice(0, 10);
 
   const cleanRef =
     (referenceCode || '').trim() ||
-    `MP-${Math.floor(100000 + Math.random() * 900000)}`;
+    `LIC-${Math.floor(100000 + Math.random() * 900000)}`;
 
   return {
-    ...currentSub,
-    planId,
+    ...normalized,
+    planId: 'single_payment_license',
     status: 'active',
-    currentPeriodEndsAt: nextEnd.toISOString().slice(0, 10),
-    licenseKey:
-      planId === 'installed_license' ? cleanRef : currentSub.licenseKey,
+    activatedAt: dateStr,
+    licenseKey: cleanRef,
     paymentHistory: [
       {
-        id: `subpay-${Date.now()}`,
-        date: safeBase.toISOString().slice(0, 10),
-        planId,
-        planLabel: labelByPlan[planId],
-        amountArs: amountByPlan[planId],
+        id: `licpay-${Date.now()}`,
+        date: dateStr,
+        planId: 'single_payment_license',
+        planLabel: 'Licencia de Uso Definitiva — Pago Único',
+        amountArs:
+          normalized.singleLicensePriceArs ||
+          DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs,
         method,
         referenceCode: cleanRef,
         status: 'Aprobado',
       },
-      ...(currentSub.paymentHistory || []),
+      ...(normalized.paymentHistory || []),
     ],
   };
 }
+

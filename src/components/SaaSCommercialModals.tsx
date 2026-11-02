@@ -17,15 +17,23 @@ import {
   BaseLocationConfig,
   BusinessProfileConfig,
   PaymentProfileConfig,
-  SubscriptionPlanId,
   TenantSubscriptionConfig,
 } from '../types/lawn';
-import { calculateSuggestedPrice } from '../utils/lawnLogic';
 import {
-  activateTenantSubscriptionPlan,
-  buildMercadoPagoSubscriptionUrl,
+  calculateSuggestedPrice,
+  resolveCityCoordinates,
+} from '../utils/lawnLogic';
+import {
+  activateTenantSingleLicense,
+  buildMercadoPagoSinglePaymentUrl,
+  DEFAULT_SINGLE_LICENSE_CONFIG,
   evaluateSubscriptionStatus,
+  normalizeTenantLicenseConfig,
 } from '../utils/saasLogic';
+import {
+  CityAutocomplete,
+  StreetAddressAutocomplete,
+} from './StreetAddressAutocomplete';
 
 interface OnboardingWhiteLabelModalProps {
   isOpen: boolean;
@@ -191,6 +199,7 @@ export function OnboardingWhiteLabelModal({
     const cleanOwner = ownerName.trim() || 'Titular';
     const cleanCity = city.trim() || 'Rosario, Santa Fe';
     const cleanAddress = address.trim() || 'Centro';
+    const resolvedCity = resolveCityCoordinates(cleanCity);
 
     onSaveCompleteConfiguration({
       businessProfile: {
@@ -207,16 +216,24 @@ export function OnboardingWhiteLabelModal({
         ),
         baggingSurchargePct: Math.max(0, Number(baggingSurchargePct) ?? 15),
         logoUrl: logoUrl || undefined,
-        brandColor: brandColor || '#059669',
+        brandColor: brandColor || '#0D9488',
         onboardingCompleted: true,
       },
       baseLocation: {
-        name: `Base Operativa (${cleanCity})`,
-        city: cleanCity,
-        address: cleanAddress,
+        name: `Base Operativa (${resolvedCity.fullName || cleanCity})`,
+        city: resolvedCity.fullName || cleanCity,
+        address: cleanAddress || resolvedCity.defaultAddress,
         coordinates: {
-          lat: Math.round((Number(lat) || -32.9442) * 10000) / 10000,
-          lng: Math.round((Number(lng) || -60.6505) * 10000) / 10000,
+          lat:
+            Math.round(
+              (Number(lat) || resolvedCity.coordinates.lat || -32.9442) *
+                10000
+            ) / 10000,
+          lng:
+            Math.round(
+              (Number(lng) || resolvedCity.coordinates.lng || -60.6505) *
+                10000
+            ) / 10000,
         },
         source: 'manual',
         updatedAt: new Date().toLocaleTimeString('es-AR', {
@@ -457,69 +474,42 @@ export function OnboardingWhiteLabelModal({
           {/* STEP 2: CIUDAD Y ZONA DE OPERACIÓN */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950">
-                Selecciona tu ciudad principal. El mapa de rutas GPS, el
-                buscador de calles y el pronóstico meteorológico se ajustarán
-                automáticamente a tu zona de trabajo.
+              <div className="p-3.5 rounded-xl bg-teal-50/80 border border-teal-200 text-xs text-teal-950">
+                Escribe las primeras letras de tu ciudad o localidad de
+                Argentina (por ejemplo, escribe <strong>"Venado"</strong> y el
+                sistema te recomendará <strong>"Venado Tuerto, Santa Fe"</strong>{' '}
+                con sus coordenadas GPS exactas).
               </div>
 
-              <div>
-                <span className="block text-xs font-semibold text-zinc-700 mb-2">
-                  Elegir Ciudad de Argentina (1 clic):
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.keys(CITY_PRESETS).map((presetKey) => {
-                    const preset = CITY_PRESETS[presetKey];
-                    const isSelected = city === preset.city;
-                    return (
-                      <button
-                        key={presetKey}
-                        type="button"
-                        onClick={() => handleSelectCityPreset(presetKey)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                          isSelected
-                            ? 'bg-zinc-950 text-white border-zinc-950'
-                            : 'bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100'
-                        }`}
-                      >
-                        {presetKey}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label
-                    htmlFor="wl-city"
-                    className="block text-xs font-semibold text-zinc-700 mb-1"
-                  >
-                    Ciudad / Zona de Operación
-                  </label>
-                  <input
+                  <CityAutocomplete
                     id="wl-city"
-                    type="text"
+                    label="Ciudad / Localidad de Argentina *"
+                    placeholder="Escribe ej: Venado, Rosario, Pilar, Tandil..."
                     value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    placeholder="Ej: Rosario, Córdoba, Pilar..."
-                    className="w-full px-3.5 py-2.5 text-sm bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white"
+                    onChange={(val) => setCity(val)}
+                    onSelectCity={(sug) => {
+                      setCity(sug.fullName);
+                      setAddress(sug.defaultAddress);
+                      setLat(String(sug.coordinates.lat));
+                      setLng(String(sug.coordinates.lng));
+                    }}
                   />
                 </div>
                 <div>
-                  <label
-                    htmlFor="wl-address"
-                    className="block text-xs font-semibold text-zinc-700 mb-1"
-                  >
-                    Dirección o Punto de Salida Habitual
-                  </label>
-                  <input
+                  <StreetAddressAutocomplete
                     id="wl-address"
-                    type="text"
+                    label="Dirección o Punto de Salida Habitual"
+                    placeholder="Ej: Bv. 25 de Mayo 850 o Av. Pellegrini 1500"
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Ej: Av. Pellegrini 1500"
-                    className="w-full px-3.5 py-2.5 text-sm bg-zinc-50 border border-zinc-200 rounded-xl focus:bg-white"
+                    activeCity={city}
+                    onChange={(val) => setAddress(val)}
+                    onSelectSuggestion={(sug) => {
+                      setAddress(sug.streetAddress);
+                      setLat(String(sug.coordinates.lat));
+                      setLng(String(sug.coordinates.lng));
+                    }}
                   />
                 </div>
               </div>
@@ -785,85 +775,42 @@ export function SubscriptionMercadoPagoModal({
   onUpdateSubscription,
   onShowBanner,
 }: SubscriptionMercadoPagoModalProps) {
-  const [selectedPlan, setSelectedPlan] =
-    useState<Exclude<SubscriptionPlanId, 'trial'>>('pro_monthly');
   const [referenceInput, setReferenceInput] = useState('');
-  const [showSellerConfig, setShowSellerConfig] = useState(false);
-
-  // Seller SaaS configuration states
-  const [mpPreapprovalPlanId, setMpPreapprovalPlanId] = useState(
-    subscription.mpPreapprovalPlanId || '2c9380848e9b1d4a018ea2f9c020014b'
-  );
-  const [mpCheckoutUrl, setMpCheckoutUrl] = useState(
-    subscription.mpCheckoutUrl || ''
-  );
-  const [monthlyPriceArs, setMonthlyPriceArs] = useState(
-    String(subscription.monthlyPriceArs || 18500)
-  );
-  const [annualPriceArs, setAnnualPriceArs] = useState(
-    String(subscription.annualPriceArs || 185000)
-  );
-  const [installedLicensePriceArs, setInstalledLicensePriceArs] = useState(
-    String(subscription.installedLicensePriceArs || 240000)
-  );
-
-  useEffect(() => {
-    if (isOpen) {
-      setMpPreapprovalPlanId(
-        subscription.mpPreapprovalPlanId || '2c9380848e9b1d4a018ea2f9c020014b'
-      );
-      setMpCheckoutUrl(subscription.mpCheckoutUrl || '');
-      setMonthlyPriceArs(String(subscription.monthlyPriceArs || 18500));
-      setAnnualPriceArs(String(subscription.annualPriceArs || 185000));
-      setInstalledLicensePriceArs(
-        String(subscription.installedLicensePriceArs || 240000)
-      );
-    }
-  }, [isOpen, subscription]);
 
   if (!isOpen) return null;
 
-  const evalState = evaluateSubscriptionStatus(subscription, activeDateStr);
-  const checkoutUrl = buildMercadoPagoSubscriptionUrl(
-    subscription,
-    selectedPlan,
+  const normalizedSub = normalizeTenantLicenseConfig(
+    subscription as unknown as Partial<TenantSubscriptionConfig> &
+      Record<string, unknown>
+  );
+  const evalState = evaluateSubscriptionStatus(normalizedSub, activeDateStr);
+  const checkoutUrl = buildMercadoPagoSinglePaymentUrl(
+    normalizedSub,
     userEmail
   );
+  const licensePrice =
+    normalizedSub.singleLicensePriceArs ||
+    DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs;
 
   const handleConfirmPaymentOrLicense = (e: React.FormEvent) => {
     e.preventDefault();
-    const updated = activateTenantSubscriptionPlan(
-      subscription,
-      selectedPlan,
-      selectedPlan === 'installed_license'
-        ? 'Transferencia / Licencia'
-        : 'Mercado Pago Suscripción',
-      referenceInput,
+    const cleanCode = referenceInput.trim();
+    const method =
+      cleanCode.toUpperCase().startsWith('LIC-') ||
+      cleanCode.toUpperCase().startsWith('KEY-')
+        ? 'Transferencia / Clave de Licencia'
+        : 'Mercado Pago Pago Único';
+
+    const updated = activateTenantSingleLicense(
+      normalizedSub,
+      method,
+      cleanCode,
       activeDateStr
     );
     onUpdateSubscription(updated);
     setReferenceInput('');
     onShowBanner(
-      `¡Suscripción activada para ${businessName}! Estado: Plan Activo en Cloud Firestore.`
-    );
-  };
-
-  const handleSaveSellerSaaSConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    onUpdateSubscription({
-      ...subscription,
-      mpPreapprovalPlanId: mpPreapprovalPlanId.trim(),
-      mpCheckoutUrl: mpCheckoutUrl.trim(),
-      monthlyPriceArs: Math.max(1000, Number(monthlyPriceArs) || 18500),
-      annualPriceArs: Math.max(10000, Number(annualPriceArs) || 185000),
-      installedLicensePriceArs: Math.max(
-        20000,
-        Number(installedLicensePriceArs) || 240000
-      ),
-    });
-    setShowSellerConfig(false);
-    onShowBanner(
-      'Configuración comercial de pasarela Mercado Pago actualizada.'
+      `¡Licencia Definitiva activada para ${businessName}! Tu cuenta tiene acceso completo sin vencimientos mensuales.`
     );
   };
 
@@ -874,44 +821,44 @@ export function SubscriptionMercadoPagoModal({
       aria-modal="true"
       aria-labelledby="subscription-modal-title"
     >
-      <div className="bg-white border border-zinc-200 rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-xl my-6 space-y-6">
+      <div className="bg-white border border-zinc-200 rounded-2xl max-w-xl w-full max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-xl my-6 space-y-5">
         <div className="flex items-start justify-between gap-4 border-b border-zinc-200 pb-4">
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-sky-700 font-semibold">
-              <CreditCard className="w-3.5 h-3.5" />
-              <span>PASARELA DE SUSCRIPCIÓN SAAS · MERCADO PAGO</span>
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-emerald-700 font-semibold">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>LICENCIA DE USO COMERCIAL · PAGO ÚNICO</span>
             </div>
             <h2
               id="subscription-modal-title"
               className="font-display text-xl font-bold text-zinc-950"
             >
-              Suscripción y Licencia Comercial — {businessName}
+              Activación Definitiva — {businessName}
             </h2>
             <p className="text-xs text-zinc-500">
-              Gestiona tu abono mensual por débito automático con Mercado Pago o
-              activa tu licencia instalada.
+              Adquiere tu licencia de uso mediante un único pago con Mercado
+              Pago, sin abonos mensuales ni renovaciones automáticas.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cerrar pasarela de suscripción"
+            aria-label="Cerrar ventana de licencia"
             className="min-h-[38px] min-w-[38px] flex items-center justify-center text-zinc-400 hover:text-zinc-900 rounded-lg"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Current Plan Banner */}
+        {/* Estado actual de la licencia */}
         <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
             <div className="text-xs text-zinc-500 font-medium">
-              Estado de tu Cuenta ({userEmail || 'Cuenta Local / Cloud'}):
+              Estado de Licencia ({userEmail || 'Espacio de Trabajo'}):
             </div>
             <div className="text-base font-bold text-zinc-950 flex items-center gap-2">
               <span>{evalState.planName}</span>
               <span
-                className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full font-semibold ${
+                className={`text-[11px] font-mono px-2.5 py-0.5 rounded-md font-semibold ${
                   evalState.isProActive
                     ? 'bg-emerald-100 text-emerald-800'
                     : evalState.status === 'expired'
@@ -923,159 +870,56 @@ export function SubscriptionMercadoPagoModal({
               </span>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowSellerConfig(!showSellerConfig)}
-            className="text-xs font-semibold text-zinc-600 hover:text-zinc-950 underline"
-          >
-            {showSellerConfig
-              ? 'Ocultar configuración de pasarela'
-              : 'Configurar link de cobro Mercado Pago (Admin SaaS)'}
-          </button>
+          {normalizedSub.licenseKey && (
+            <div className="text-xs font-mono text-zinc-600 bg-white px-2.5 py-1 rounded-lg border border-zinc-200">
+              Clave: <span className="font-bold">{normalizedSub.licenseKey}</span>
+            </div>
+          )}
         </div>
 
-        {/* Optional SaaS Owner Configuration Panel */}
-        {showSellerConfig && (
-          <form
-            onSubmit={handleSaveSellerSaaSConfig}
-            className="p-4 rounded-xl bg-sky-50/70 border border-sky-200 space-y-3"
-          >
-            <div className="text-xs font-bold text-sky-950">
-              Configuración del Vendedor del Software (Tu Pasarela Mercado Pago)
-            </div>
-            <p className="text-[11px] text-sky-900">
-              Pega aquí tu Link de Suscripción de Mercado Pago (o ID de plan{' '}
-              <code>preapproval_plan_id</code>) y define los precios en pesos
-              que cobrarás a los jardineros que se den de alta.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                  Link directo de Suscripción Mercado Pago (Opcional)
-                </label>
-                <input
-                  type="url"
-                  value={mpCheckoutUrl}
-                  onChange={(e) => setMpCheckoutUrl(e.target.value)}
-                  placeholder="https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=..."
-                  className="w-full px-3 py-2 text-xs font-mono bg-white border border-sky-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                  Abono Mensual ($ ARS)
-                </label>
-                <input
-                  type="number"
-                  value={monthlyPriceArs}
-                  onChange={(e) => setMonthlyPriceArs(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono font-bold bg-white border border-sky-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                  Abono Anual ($ ARS)
-                </label>
-                <input
-                  type="number"
-                  value={annualPriceArs}
-                  onChange={(e) => setAnnualPriceArs(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono font-bold bg-white border border-sky-300 rounded-lg"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg"
-              >
-                Guardar Parámetros de Pasarela
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* Plan Selector Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[
-            {
-              id: 'pro_monthly' as const,
-              title: 'Abono Mensual',
-              price: subscription.monthlyPriceArs || 18500,
-              period: '/ mes',
-              desc: 'Débito automático vía Mercado Pago. Clientes, rutas GPS y recibos ilimitados.',
-            },
-            {
-              id: 'pro_annual' as const,
-              title: 'Plan Anual Pro',
-              price: subscription.annualPriceArs || 185000,
-              period: '/ año',
-              desc: '2 meses bonificados. Ideal para empresas de mantenimiento de parques y countries.',
-            },
-            {
-              id: 'installed_license' as const,
-              title: 'Software Instalado',
-              price: subscription.installedLicensePriceArs || 240000,
-              period: 'pago único',
-              desc: 'Licencia comercial White-Label instalada con tu marca propia y dominio.',
-            },
-          ].map((plan) => {
-            const isSelected = selectedPlan === plan.id;
-            return (
-              <button
-                key={plan.id}
-                type="button"
-                onClick={() => setSelectedPlan(plan.id)}
-                className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between ${
-                  isSelected
-                    ? 'border-zinc-950 bg-zinc-950 text-white'
-                    : 'border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300'
-                }`}
-              >
-                <div>
-                  <div className="text-xs font-semibold opacity-80">
-                    {plan.title}
-                  </div>
-                  <div className="text-xl font-bold font-mono tabular-nums mt-1">
-                    ${plan.price.toLocaleString('es-AR')}
-                    <span className="text-xs font-sans font-normal opacity-75">
-                      {' '}
-                      {plan.period}
-                    </span>
-                  </div>
-                  <p
-                    className={`text-[11px] mt-2 leading-relaxed ${
-                      isSelected ? 'text-zinc-300' : 'text-zinc-500'
-                    }`}
-                  >
-                    {plan.desc}
-                  </p>
-                </div>
-                <div
-                  className={`mt-3 text-[11px] font-semibold inline-flex items-center gap-1 ${
-                    isSelected ? 'text-emerald-400' : 'text-emerald-700'
-                  }`}
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>{isSelected ? 'Seleccionado' : 'Elegir plan'}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Direct Mercado Pago Checkout + Instant Verification */}
-        <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Tarjeta Única de Licencia de Pago Único */}
+        <div className="p-5 rounded-2xl border-2 border-zinc-950 bg-zinc-950 text-white space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3.5">
             <div>
-              <div className="text-xs font-bold text-zinc-950">
-                Paso 1: Pagar Suscripción Segura con Mercado Pago
+              <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-semibold">
+                SIN CARGOS RECURRENTES NI SUSCRIPCIONES
+              </span>
+              <h3 className="text-lg font-bold mt-0.5">
+                Licencia Comercial Completa (Pago Único)
+              </h3>
+            </div>
+            <div className="text-left sm:text-right">
+              <div className="text-2xl font-bold font-mono tabular-nums text-white">
+                ${licensePrice.toLocaleString('es-AR')}
               </div>
-              <p className="text-[11px] text-zinc-500">
-                Abre el checkout oficial de suscripciones de Mercado Pago en
-                pesos argentinos.
-              </p>
+              <div className="text-[11px] text-zinc-400">
+                Pago único definitivo · ARS
+              </div>
+            </div>
+          </div>
+
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-zinc-300">
+            <li className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Clientes, lotes y rutas GPS ilimitados</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Marca propia (logo, tarifas $/m² y alias)</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Recibos imprimibles y avisos por WhatsApp</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Respaldo privado y aislado en la nube</span>
+            </li>
+          </ul>
+
+          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-zinc-300">
+              Abona por única vez mediante Checkout Pro de Mercado Pago.
             </div>
             <a
               href={checkoutUrl}
@@ -1085,20 +929,33 @@ export function SubscriptionMercadoPagoModal({
               className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#009EE3] hover:bg-[#0089C7] rounded-xl transition-colors whitespace-nowrap shrink-0"
             >
               <CreditCard className="w-4 h-4" />
-              <span>Suscribirme con Mercado Pago</span>
+              <span>Comprar Licencia con Mercado Pago</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
+          </div>
+        </div>
+
+        {/* Validación de Comprobante o Clave de Activación */}
+        <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3">
+          <div>
+            <div className="text-xs font-bold text-zinc-950">
+              ¿Ya realizaste el pago único o tienes una Clave de Licencia?
+            </div>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Ingresa el número de operación de Mercado Pago o tu código de
+              activación para habilitar la licencia permanente en tu cuenta.
+            </p>
           </div>
 
           <form
             onSubmit={handleConfirmPaymentOrLicense}
-            className="pt-3 border-t border-zinc-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+            className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
           >
             <input
               type="text"
               value={referenceInput}
               onChange={(e) => setReferenceInput(e.target.value)}
-              placeholder="N° de comprobante Mercado Pago o Clave de Licencia (opcional)"
+              placeholder="Ej: MP-849201 o LIC-PASTOPRO-2026"
               className="flex-1 px-3 py-2 text-xs font-mono bg-white border border-zinc-200 rounded-xl"
             />
             <button
@@ -1107,20 +964,20 @@ export function SubscriptionMercadoPagoModal({
               className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors whitespace-nowrap"
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>Validar Pago / Activar Plan Ahora</span>
+              <span>Activar Licencia Definitiva</span>
             </button>
           </form>
         </div>
 
-        {/* Payment History */}
-        {subscription.paymentHistory &&
-          subscription.paymentHistory.length > 0 && (
+        {/* Historial de Pagos / Comprobantes */}
+        {normalizedSub.paymentHistory &&
+          normalizedSub.paymentHistory.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-bold text-zinc-900">
-                Historial de Pagos y Licencias Registradas
+                Comprobante de Licencia Registrado
               </div>
               <div className="border border-zinc-200 rounded-xl divide-y divide-zinc-100 overflow-hidden">
-                {subscription.paymentHistory.map((item) => (
+                {normalizedSub.paymentHistory.map((item) => (
                   <div
                     key={item.id}
                     className="px-3.5 py-2.5 flex items-center justify-between text-xs bg-white"

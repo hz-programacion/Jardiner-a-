@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activateTenantSubscriptionPlan,
-  buildMercadoPagoSubscriptionUrl,
+  activateTenantSingleLicense,
+  buildMercadoPagoSinglePaymentUrl,
   createBlankTenantWorkspace,
   createInitialSubscriptionConfig,
   evaluateSubscriptionStatus,
@@ -46,13 +46,13 @@ test('createBlankTenantWorkspace creates a 100% clean workspace without Diego or
   assert.equal(workspace.paymentProfile.cbu, '');
   assert.notEqual(workspace.paymentProfile.alias, 'pastopro.venado');
 
-  // Must start on a 14-day free trial
-  assert.equal(workspace.subscription.planId, 'trial');
+  // Must start on a 14-day evaluation before activating one-time license
+  assert.equal(workspace.subscription.planId, 'evaluation');
   assert.equal(workspace.subscription.status, 'trialing');
   assert.equal(workspace.subscription.trialEndsAt, '2026-11-15');
 });
 
-test('evaluateSubscriptionStatus and activateTenantSubscriptionPlan manage Mercado Pago SaaS lifecycle', () => {
+test('evaluateSubscriptionStatus and activateTenantSingleLicense manage One-Time Payment License lifecycle', () => {
   const initialSub = createInitialSubscriptionConfig('2026-11-01T12:00:00Z');
   const trialStatus = evaluateSubscriptionStatus(initialSub, '2026-11-05');
 
@@ -64,26 +64,26 @@ test('evaluateSubscriptionStatus and activateTenantSubscriptionPlan manage Merca
   assert.equal(expiredStatus.status, 'expired');
   assert.equal(expiredStatus.daysRemaining, 0);
 
-  const activatedSub = activateTenantSubscriptionPlan(
+  const activatedSub = activateTenantSingleLicense(
     initialSub,
-    'pro_monthly',
-    'Mercado Pago Suscripción',
+    'Mercado Pago Pago Único',
     'MP-998877',
     '2026-11-05'
   );
   const activeStatus = evaluateSubscriptionStatus(activatedSub, '2026-11-10');
   assert.equal(activeStatus.status, 'active');
   assert.equal(activeStatus.isProActive, true);
+  assert.equal(activatedSub.planId, 'single_payment_license');
+  assert.equal(activatedSub.licenseKey, 'MP-998877');
   assert.equal(activatedSub.paymentHistory.length, 1);
   assert.equal(activatedSub.paymentHistory[0].referenceCode, 'MP-998877');
 
-  const mpUrl = buildMercadoPagoSubscriptionUrl(
+  const mpUrl = buildMercadoPagoSinglePaymentUrl(
     activatedSub,
-    'pro_monthly',
     'lucas@parquesrosario.com.ar'
   );
-  assert.ok(mpUrl.includes('mercadopago.com.ar/subscriptions/checkout'));
-  assert.ok(mpUrl.includes('preapproval_plan_id='));
+  assert.ok(mpUrl.includes('mpago.la/'));
+  assert.ok(mpUrl.includes('payer_email='));
 });
 
 test('calculateSuggestedPrice respects tenant white-label base pricing and surcharges', () => {

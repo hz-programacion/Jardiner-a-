@@ -5,17 +5,17 @@
     --font-display: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    --surface-canvas: #fafafa;
+    --surface-canvas: #f3f6f5;
     --surface-card: #ffffff;
-    --forest-deep: #09090b;
-    --forest-accent: #059669;
+    --forest-deep: #0b1d16;
+    --forest-accent: #0d9488;
   }
 
   html,
   body {
     font-family: var(--font-sans);
     background-color: var(--surface-canvas);
-    color: #09090b;
+    color: #0f172a;
     margin: 0;
     padding: 0;
     -webkit-font-smoothing: antialiased;
@@ -41,24 +41,26 @@
   }
 }
 
-/* Minimalist Architectural Surfaces */
+/* Architectural SaaS Surfaces */
 .surface-card {
   background-color: #ffffff;
-  border: 1px solid #e4e4e7;
-  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.03);
+  border: 1px solid #e2e8f0;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.03),
+    0 4px 12px -4px rgba(15, 23, 42, 0.03);
 }
 
 .surface-glass-bar {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid #e4e4e7;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid #e2e8f0;
 }
 
 .surface-command {
-  background: #09090b;
-  border: 1px solid #27272a;
-  box-shadow: 0 8px 24px -6px rgba(9, 9, 11, 0.18);
+  background: linear-gradient(135deg, #0b1d16 0%, #112920 100%);
+  border: 1px solid #1e3a2f;
+  box-shadow: 0 10px 26px -6px rgba(11, 29, 22, 0.22);
 }
 
 .card-interactive-lift {
@@ -69,16 +71,16 @@
 }
 
 .card-interactive-lift:hover {
-  border-color: #d4d4d8;
-  box-shadow: 0 4px 12px rgba(9, 9, 11, 0.04);
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.06);
 }
 
 .stop-card-spotlight {
   background-color: #ffffff;
-  border-color: #059669 !important;
+  border-color: #0d9488 !important;
   box-shadow:
-    0 2px 8px rgba(5, 150, 105, 0.06),
-    0 12px 24px -8px rgba(9, 9, 11, 0.07);
+    0 0 0 1px rgba(13, 148, 136, 0.25),
+    0 12px 24px -8px rgba(13, 148, 136, 0.12);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -88,46 +90,22 @@
   }
 }
 
-/* Accessibility: Dynamic Font Scaling for Outdoor / Older Users */
-html[data-font-scale="large"] {
-  font-size: 110%;
-}
-
-html[data-font-scale="xlarge"] {
-  font-size: 120%;
-}
-
-/* Accessibility: High-Contrast Sunlight / Outdoor Mode */
-html[data-high-contrast="true"] body {
-  background-color: #ffffff;
-  color: #000000;
-}
-
-html[data-high-contrast="true"] .surface-card,
-html[data-high-contrast="true"] .surface-glass-bar {
-  background: #ffffff !important;
-  border: 2px solid #09090b !important;
-  box-shadow: none !important;
-}
-
-html[data-high-contrast="true"] .text-zinc-500,
-html[data-high-contrast="true"] .text-zinc-600,
-html[data-high-contrast="true"] .text-slate-500,
-html[data-high-contrast="true"] .text-slate-600 {
-  color: #09090b !important;
-}
-
 /* Keyboard & Assistive Focus Visibility */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #059669;
+  outline: 2px solid #0d9488;
   outline-offset: 2px;
 }
 
+/* Print Stylesheet: Prevents CBU, Alias, and Receipt Overflow */
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
   body * {
     visibility: hidden !important;
   }
@@ -142,13 +120,18 @@ textarea:focus-visible {
     width: 100% !important;
     max-width: 100% !important;
     max-height: none !important;
+    overflow: visible !important;
     box-shadow: none !important;
     border: 1px solid #cbd5e1 !important;
     margin: 0 !important;
-    padding: 24px !important;
+    padding: 20px !important;
     background: #ffffff !important;
+    box-sizing: border-box !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
   }
   .no-print {
     display: none !important;
   }
 }
+

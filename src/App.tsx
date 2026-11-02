@@ -33,12 +33,12 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ShieldCheck,
   Sparkles,
   Sun,
   Trash2,
   User as UserIcon,
   Users,
-  Volume2,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -51,7 +51,6 @@ import {
   INITIAL_TODAY_JOBS,
 } from './data/seedData';
 import {
-  AccessibilityPreferences,
   BackupPayload,
   BaseLocationConfig,
   BusinessProfileConfig,
@@ -59,7 +58,6 @@ import {
   EquipmentItem,
   InvoiceRecord,
   OperationalExpense,
-  ParsedVoiceCommand,
   PaymentMethod,
   PaymentProfileConfig,
   ScheduledJob,
@@ -67,10 +65,8 @@ import {
 } from './types/lawn';
 import {
   applyBulkPriceIncrease,
-  buildDailyRouteSpeechText,
   buildGoogleMapsNavUrl,
   buildSafeWhatsAppUrl,
-  buildStopSpeechText,
   buildWeekDaysForDate,
   calculateFinancialSummary,
   completeJobAndCreateInvoice,
@@ -79,6 +75,7 @@ import {
   generateGoogleSheetsTsv,
   generateSpreadsheetCsv,
   getClientPriceHistory,
+  getTodayIsoLocal,
   getWeatherForDate,
   moveScheduledJobOrder,
   optimizeRouteOrder,
@@ -94,9 +91,11 @@ import {
   createBlankTenantWorkspace,
   createInitialSubscriptionConfig,
   evaluateSubscriptionStatus,
+  getInitialAccessApprovalState,
   getTenantStorageKey,
+  isPrimaryAdminEmail,
+  normalizeTenantLicenseConfig,
 } from './utils/saasLogic';
-import { VoiceAccessibilityPanel } from './components/VoiceAccessibilityPanel';
 import { RouteMapPanel } from './components/RouteMapPanel';
 import { CalendarAgendaView } from './components/CalendarAgendaView';
 import {
@@ -128,12 +127,17 @@ import {
   SubscriptionMercadoPagoModal,
 } from './components/SaaSCommercialModals';
 import {
+  AdminControlPanelView,
+  PendingApprovalScreen,
+} from './components/AdminAccessControl';
+import {
   auth,
-  firebaseConfig,
+  getLocalTenantApprovalState,
   loadWorkspaceFromFirestore,
   onAuthStateChanged,
   saveWorkspaceToFirestore,
   signOutFirebase,
+  subscribeToWorkspaceFirestore,
   testFirestoreConnection,
   User,
 } from './firebase';
@@ -156,13 +160,14 @@ type ActiveTab =
   | 'clientes'
   | 'cotizador'
   | 'facturacion'
-  | 'respaldo';
+  | 'respaldo'
+  | 'admin';
 
 const DEMO_STORAGE_KEY = 'pastopro_demo_workspace_v2';
 const ACTIVE_TENANT_SESSION_KEY = 'pastopro_active_tenant_session_v1';
 const SHEETS_META_KEY = 'pastopro_sheets_meta_v6';
 const LOCAL_MODE_KEY = 'pastopro_local_mode_v1';
-const TODAY_REFERENCE = '2026-11-01';
+const TODAY_REFERENCE = getTodayIsoLocal();
 
 const DEFAULT_PAYMENT_PROFILE: PaymentProfileConfig = {
   alias: 'pastopro.demo',
@@ -227,10 +232,15 @@ export default function App() {
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle');
   const [cloudSyncMessage, setCloudSyncMessage] = useState<string | null>(null);
+  const [isCheckingApprovalStatus, setIsCheckingApprovalStatus] =
+    useState(false);
   const hasHydratedFromCloudRef = useRef<string | null>(null);
 
   // Active storage key isolated per tenant (or demo workspace)
   const activeTenantUid = activeTenantSession?.uid || firebaseUser?.uid || null;
+  const activeUserEmail =
+    activeTenantSession?.email || firebaseUser?.email || null;
+  const isAdminUser = isPrimaryAdminEmail(activeUserEmail);
   const currentStorageKey = useMemo(
     () => getTenantStorageKey(activeTenantUid, !activeTenantUid),
     [activeTenantUid]
@@ -248,8 +258,8 @@ export default function App() {
         const saved = localStorage.getItem(currentStorageKey);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (parsed.subscription && parsed.subscription.planId) {
-            return parsed.subscription;
+          if (parsed.subscription) {
+            return normalizeTenantLicenseConfig(parsed.subscription);
           }
         }
       } catch {
@@ -281,25 +291,6 @@ export default function App() {
   );
   const [isBusinessProfileModalOpen, setIsBusinessProfileModalOpen] =
     useState(false);
-
-  // Accessibility & Web Speech API state
-  const [accessibilityPrefs, setAccessibilityPrefs] =
-    useState<AccessibilityPreferences>(() => {
-      try {
-        const saved = localStorage.getItem('pastopro_accessibility_prefs_v1');
-        if (saved) return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
-      return {
-        fontScale: 'normal',
-        highContrastOutdoor: false,
-        autoSpeakConfirmations: true,
-        speechRate: 1,
-      };
-    });
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [lastVoiceStatus, setLastVoiceStatus] = useState<string | null>(null);
 
   // Dynamic Base Location / GPS Starting Point
   const [baseLocation, setBaseLocation] = useState<BaseLocationConfig>(() => {
@@ -537,24 +528,51 @@ export default function App() {
   const hydrateTenantWorkspace = useCallback(
     async (session: AuthenticatedTenantSession) => {
       const tenantKey = getTenantStorageKey(session.uid, false);
-      setActiveTenantSession(session);
-      try {
-        localStorage.setItem(
-          ACTIVE_TENANT_SESSION_KEY,
-          JSON.stringify(session)
-        );
-      } catch {
-        // ignore
-      }
+      const initialApproval = getInitialAccessApprovalState(session.email);
+      const localApproval = getLocalTenantApprovalState(
+        session.uid,
+        session.email
+      );
 
       setCloudSyncState('syncing');
       const loadedCloud = await loadWorkspaceFromFirestore(session.uid);
       if (loadedCloud.data) {
         const d = loadedCloud.data;
+        const resolvedApproved = isPrimaryAdminEmail(session.email)
+          ? true
+          : typeof d.isApproved === 'boolean'
+          ? d.isApproved
+          : localApproval.isApproved;
+        const resolvedStatus = isPrimaryAdminEmail(session.email)
+          ? 'approved'
+          : d.approvalStatus || localApproval.approvalStatus;
+
+        const updatedSession: AuthenticatedTenantSession = {
+          ...session,
+          isApproved: resolvedApproved,
+          approvalStatus: resolvedStatus,
+          role: isPrimaryAdminEmail(session.email) ? 'admin' : 'user',
+        };
+        setActiveTenantSession(updatedSession);
+        try {
+          localStorage.setItem(
+            ACTIVE_TENANT_SESSION_KEY,
+            JSON.stringify(updatedSession)
+          );
+        } catch {
+          // ignore
+        }
+
         if (d.businessProfile?.appName) setBusinessProfile(d.businessProfile);
         if (d.baseLocation?.coordinates) setBaseLocation(d.baseLocation);
         if (d.paymentProfile?.alias) setPaymentProfile(d.paymentProfile);
-        if (d.subscription?.planId) setSubscription(d.subscription);
+        if (d.subscription)
+          setSubscription(
+            normalizeTenantLicenseConfig(
+              d.subscription as unknown as Partial<TenantSubscriptionConfig> &
+                Record<string, unknown>
+            )
+          );
         setProperties(Array.isArray(d.properties) ? d.properties : []);
         setScheduledJobs(Array.isArray(d.todayJobs) ? d.todayJobs : []);
         setInvoices(Array.isArray(d.invoices) ? d.invoices : []);
@@ -562,9 +580,7 @@ export default function App() {
         if (Array.isArray(d.equipment)) setEquipment(d.equipment);
         hasHydratedFromCloudRef.current = session.uid;
         setCloudSyncState('synced');
-        setCloudSyncMessage(
-          `Espacio privado cargado desde Firestore (${firebaseConfig.projectId}).`
-        );
+        setCloudSyncMessage('Espacio privado sincronizado en la nube.');
         return;
       }
 
@@ -573,13 +589,35 @@ export default function App() {
         const localRaw = localStorage.getItem(tenantKey);
         if (localRaw && !session.isNewRegistration) {
           const parsed = JSON.parse(localRaw);
+          const resolvedApproved = isPrimaryAdminEmail(session.email)
+            ? true
+            : typeof parsed.isApproved === 'boolean'
+            ? parsed.isApproved
+            : localApproval.isApproved;
+          const resolvedStatus = isPrimaryAdminEmail(session.email)
+            ? 'approved'
+            : parsed.approvalStatus || localApproval.approvalStatus;
+
+          const updatedSession: AuthenticatedTenantSession = {
+            ...session,
+            isApproved: resolvedApproved,
+            approvalStatus: resolvedStatus,
+            role: isPrimaryAdminEmail(session.email) ? 'admin' : 'user',
+          };
+          setActiveTenantSession(updatedSession);
+          localStorage.setItem(
+            ACTIVE_TENANT_SESSION_KEY,
+            JSON.stringify(updatedSession)
+          );
+
           if (parsed.businessProfile?.appName)
             setBusinessProfile(parsed.businessProfile);
           if (parsed.baseLocation?.coordinates)
             setBaseLocation(parsed.baseLocation);
           if (parsed.paymentProfile?.alias)
             setPaymentProfile(parsed.paymentProfile);
-          if (parsed.subscription?.planId) setSubscription(parsed.subscription);
+          if (parsed.subscription)
+            setSubscription(normalizeTenantLicenseConfig(parsed.subscription));
           setProperties(
             Array.isArray(parsed.properties) ? parsed.properties : []
           );
@@ -591,9 +629,7 @@ export default function App() {
           if (Array.isArray(parsed.equipment)) setEquipment(parsed.equipment);
           hasHydratedFromCloudRef.current = session.uid;
           setCloudSyncState('synced');
-          setCloudSyncMessage(
-            `Cuenta aislada activa (${session.email}).`
-          );
+          setCloudSyncMessage(`Cuenta aislada activa (${session.email}).`);
           return;
         }
       } catch {
@@ -601,13 +637,31 @@ export default function App() {
       }
 
       // Brand-new tenant registration: create a 100% clean workspace (0 clients from Diego)
+      // Default state for non-admin accounts: isApproved = false, approvalStatus = 'pending'
       const blank = createBlankTenantWorkspace({
         uid: session.uid,
         email: session.email,
         displayName: session.displayName,
         businessName: session.businessName,
         cityPresetKey: session.cityPresetKey,
+        customCityInput: session.customCityInput,
       });
+
+      const newSession: AuthenticatedTenantSession = {
+        ...session,
+        isApproved: initialApproval.isApproved,
+        approvalStatus: initialApproval.approvalStatus,
+        role: initialApproval.role,
+      };
+      setActiveTenantSession(newSession);
+      try {
+        localStorage.setItem(
+          ACTIVE_TENANT_SESSION_KEY,
+          JSON.stringify(newSession)
+        );
+      } catch {
+        // ignore
+      }
 
       setBusinessProfile(blank.businessProfile);
       setBaseLocation(blank.baseLocation);
@@ -634,13 +688,15 @@ export default function App() {
       setCloudSyncState(saved.ok ? 'synced' : 'idle');
       setCloudSyncMessage(
         saved.ok
-          ? `Cuenta aislada inicializada en Firestore (${firebaseConfig.projectId}).`
+          ? 'Cuenta aislada inicializada y sincronizada en la nube.'
           : `Espacio privado inicializado para ${blank.businessProfile.appName} (${blank.baseLocation.city}).`
       );
 
-      // Automatically open the White-Label Setup Wizard for new accounts
-      setIsFirstTimeWhiteLabelSetup(true);
-      setIsWhiteLabelModalOpen(true);
+      // Only open White-Label wizard automatically if the account is already approved (e.g. Admin)
+      if (initialApproval.isApproved) {
+        setIsFirstTimeWhiteLabelSetup(true);
+        setIsWhiteLabelModalOpen(true);
+      }
     },
     []
   );
@@ -700,6 +756,90 @@ export default function App() {
       unsubSheets();
     };
   }, [hydrateTenantWorkspace]);
+
+  // Real-time subscription to Firestore workspace approval status so admin approvals reflect immediately
+  useEffect(() => {
+    const uid = activeTenantUid;
+    if (!uid || !firebaseUser) return;
+    const unsub = subscribeToWorkspaceFirestore(uid, (cloudData) => {
+      if (!cloudData) return;
+      if (typeof cloudData.isApproved === 'boolean') {
+        setActiveTenantSession((prev) => {
+          if (!prev) return prev;
+          const nextApproved = isPrimaryAdminEmail(prev.email)
+            ? true
+            : cloudData.isApproved!;
+          const nextStatus = isPrimaryAdminEmail(prev.email)
+            ? 'approved'
+            : cloudData.approvalStatus || (nextApproved ? 'approved' : 'pending');
+          if (
+            prev.isApproved === nextApproved &&
+            prev.approvalStatus === nextStatus
+          ) {
+            return prev;
+          }
+          const updated: AuthenticatedTenantSession = {
+            ...prev,
+            isApproved: nextApproved,
+            approvalStatus: nextStatus,
+          };
+          try {
+            localStorage.setItem(
+              ACTIVE_TENANT_SESSION_KEY,
+              JSON.stringify(updated)
+            );
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
+      }
+    });
+    return () => unsub();
+  }, [activeTenantUid, firebaseUser]);
+
+  const handleRefreshApprovalStatus = useCallback(async () => {
+    if (!activeTenantSession && !firebaseUser) return;
+    setIsCheckingApprovalStatus(true);
+    const uid = activeTenantSession?.uid || firebaseUser?.uid || '';
+    const email = activeTenantSession?.email || firebaseUser?.email || '';
+    try {
+      const cloud = await loadWorkspaceFromFirestore(uid);
+      const localState = getLocalTenantApprovalState(uid, email);
+      const nextApproved = isPrimaryAdminEmail(email)
+        ? true
+        : typeof cloud.data?.isApproved === 'boolean'
+        ? cloud.data.isApproved
+        : localState.isApproved;
+      const nextStatus = isPrimaryAdminEmail(email)
+        ? 'approved'
+        : cloud.data?.approvalStatus || localState.approvalStatus;
+
+      if (activeTenantSession) {
+        const updated: AuthenticatedTenantSession = {
+          ...activeTenantSession,
+          isApproved: nextApproved,
+          approvalStatus: nextStatus,
+        };
+        setActiveTenantSession(updated);
+        localStorage.setItem(
+          ACTIVE_TENANT_SESSION_KEY,
+          JSON.stringify(updated)
+        );
+      }
+      if (nextApproved) {
+        showBanner(
+          '¡Tu licencia de pago único fue aprobada por el administrador! Bienvenido a PastoPro.'
+        );
+      } else {
+        showBanner(
+          'Tu cuenta continúa pendiente de validación de pago por el administrador.'
+        );
+      }
+    } finally {
+      setIsCheckingApprovalStatus(false);
+    }
+  }, [activeTenantSession, firebaseUser, showBanner]);
 
   // Automatically sync changes to Firestore when user is logged in
   useEffect(() => {
@@ -768,11 +908,9 @@ export default function App() {
         minute: '2-digit',
       });
       setCloudSyncMessage(
-        `Sincronizado con Firestore (${firebaseConfig.projectId}) a las ${nowStr}.`
+        `Sincronizado en la nube a las ${nowStr}.`
       );
-      showBanner(
-        `Datos guardados en Cloud Firestore (${firebaseConfig.projectId}).`
-      );
+      showBanner('Datos respaldados en la nube.');
     } else {
       setCloudSyncState('idle');
       setCloudSyncMessage(
@@ -861,60 +999,6 @@ export default function App() {
       // ignore
     }
   }, [connectedSpreadsheetId, connectedSpreadsheetUrl, lastSyncedAt]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        'pastopro_accessibility_prefs_v1',
-        JSON.stringify(accessibilityPrefs)
-      );
-    } catch {
-      // ignore
-    }
-    const root = document.documentElement;
-    root.setAttribute('data-font-scale', accessibilityPrefs.fontScale);
-    root.setAttribute(
-      'data-high-contrast',
-      String(accessibilityPrefs.highContrastOutdoor)
-    );
-  }, [accessibilityPrefs]);
-
-  const stopSpeakingOutLoud = useCallback(() => {
-    try {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    } catch {
-      // ignore
-    }
-    setIsSpeaking(false);
-  }, []);
-
-  const speakTextOutLoud = useCallback(
-    (text: string) => {
-      setLastVoiceStatus(text);
-      try {
-        if (
-          typeof window !== 'undefined' &&
-          'speechSynthesis' in window &&
-          typeof SpeechSynthesisUtterance !== 'undefined'
-        ) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = 'es-AR';
-          utterance.rate = accessibilityPrefs.speechRate || 1;
-          utterance.onstart = () => setIsSpeaking(true);
-          utterance.onend = () => setIsSpeaking(false);
-          utterance.onerror = () => setIsSpeaking(false);
-          setIsSpeaking(true);
-          window.speechSynthesis.speak(utterance);
-        }
-      } catch {
-        setIsSpeaking(false);
-      }
-    },
-    [accessibilityPrefs.speechRate]
-  );
 
   const handleUpdateBaseLocation = (newBase: BaseLocationConfig) => {
     setBaseLocation(newBase);
@@ -1201,82 +1285,6 @@ export default function App() {
       )
     );
     showBanner('Corte reabierto como Pendiente.');
-  };
-
-  const handleExecuteVoiceCommand = (parsed: ParsedVoiceCommand) => {
-    setLastVoiceStatus(parsed.spokenResponse);
-    showBanner(
-      `Comando de voz («${parsed.rawTranscript}»): ${parsed.spokenResponse}`
-    );
-
-    if (parsed.intent === 'READ_ROUTE') {
-      const routeScript = buildDailyRouteSpeechText(
-        activeDate,
-        baseLocation.city,
-        activeDateJobs,
-        activeDayWeather
-      );
-      speakTextOutLoud(routeScript);
-      return;
-    }
-
-    if (accessibilityPrefs.autoSpeakConfirmations) {
-      speakTextOutLoud(parsed.spokenResponse);
-    }
-
-    switch (parsed.intent) {
-      case 'ADD_CLIENT': {
-        setEditingClient(null);
-        setPrefillClientData(
-          parsed.targetClientName
-            ? { clientName: parsed.targetClientName }
-            : null
-        );
-        setModalDefaultDate(activeDate);
-        setModalDefaultTime('08:30');
-        setIsClientModalOpen(true);
-        break;
-      }
-      case 'COMPLETE_JOB': {
-        if (parsed.targetJobId) {
-          const found = activeDateJobs.find((j) => j.id === parsed.targetJobId);
-          if (found) {
-            setSelectedJobId(found.id);
-            setJobToComplete(found);
-          }
-        }
-        break;
-      }
-      case 'START_JOB': {
-        if (parsed.targetJobId) {
-          handleStartJob(parsed.targetJobId);
-        }
-        break;
-      }
-      case 'CHANGE_DATE': {
-        if (parsed.targetDateStr) {
-          setActiveDate(parsed.targetDateStr);
-        }
-        break;
-      }
-      case 'OPTIMIZE_ROUTE': {
-        handleOptimizeRoute();
-        break;
-      }
-      case 'RAIN_DELAY': {
-        handleRainDelayForDate(activeDate);
-        break;
-      }
-      case 'NAVIGATE_VIEW': {
-        if (parsed.targetView === 'agenda') setActiveTab('agenda');
-        else if (parsed.targetView === 'clientes') setActiveTab('clientes');
-        else if (parsed.targetView === 'finanzas') setActiveTab('facturacion');
-        else setActiveTab('ruta');
-        break;
-      }
-      default:
-        break;
-    }
   };
 
   const handleRemoveStopFromSchedule = (jobId: string, clientName: string) => {
@@ -1859,7 +1867,22 @@ export default function App() {
     [subscription, activeDate]
   );
 
-  // If user is not authenticated and hasn't explicitly entered Demo Mode in this session, show the Login Gate
+  const isAccountApproved = useMemo(() => {
+    if (localModeAccepted && !activeTenantSession && !firebaseUser) {
+      return true;
+    }
+    const email = activeTenantSession?.email || firebaseUser?.email || '';
+    if (isPrimaryAdminEmail(email)) return true;
+    if (activeTenantSession && typeof activeTenantSession.isApproved === 'boolean') {
+      return activeTenantSession.isApproved;
+    }
+    if (activeTenantUid) {
+      return getLocalTenantApprovalState(activeTenantUid, email).isApproved;
+    }
+    return false;
+  }, [localModeAccepted, activeTenantSession, firebaseUser, activeTenantUid]);
+
+  // 1. If user is not authenticated and hasn't explicitly entered Demo Mode in this session, show the Login Gate
   if (!firebaseUser && !activeTenantSession && !localModeAccepted) {
     return (
       <AuthGate
@@ -1896,14 +1919,40 @@ export default function App() {
           setIsWhiteLabelModalOpen(true);
         }}
         onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        onOpenAdminPanel={() => setActiveTab('admin')}
         onForceCloudSync={handleForceCloudSync}
         onAuthSuccessBanner={showBanner}
       />
     );
   }
 
+  // 2. Mandatory Administrator Approval Gate: block unapproved authenticated accounts from viewing the main menu
+  if ((firebaseUser || activeTenantSession) && !isAccountApproved) {
+    return (
+      <PendingApprovalScreen
+        userUid={activeTenantSession?.uid || firebaseUser?.uid || 'pending-uid'}
+        userEmail={
+          activeTenantSession?.email ||
+          firebaseUser?.email ||
+          'usuario@pastopro.app'
+        }
+        userName={
+          activeTenantSession?.displayName ||
+          businessProfile.ownerName ||
+          'Titular'
+        }
+        businessName={businessProfile.appName}
+        city={baseLocation.city}
+        approvalStatus={activeTenantSession?.approvalStatus || 'pending'}
+        subscription={subscription}
+        onRefreshApprovalStatus={handleRefreshApprovalStatus}
+        onSignOut={handleFullLogout}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#FAFAFA] text-zinc-900 flex flex-col pb-20 md:pb-10">
+    <div className="min-h-screen bg-[#F3F6F5] text-zinc-900 flex flex-col pb-20 md:pb-10">
       {/* Skip-to-Content Link */}
       <a
         href="#main-workspace"
@@ -1912,8 +1961,8 @@ export default function App() {
         Saltar al contenido principal
       </a>
 
-      {/* Top Bar — Strict 3-Zone Minimalist Header Contract */}
-      <header className="sticky top-0 z-30 h-14 md:h-16 bg-white/95 backdrop-blur-md border-b border-zinc-200/90 px-4 sm:px-6 flex items-center justify-between gap-4">
+      {/* Top Bar — Architectural Command Header */}
+      <header className="sticky top-0 z-30 min-h-14 md:min-h-16 bg-[#0B1D16] text-white border-b border-emerald-950 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-3 shadow-sm">
         {/* Zone 1: Minimalist Brand Wordmark + Custom Uploaded Logo */}
         <a
           href="#ruta"
@@ -1922,39 +1971,39 @@ export default function App() {
             setActiveTab('ruta');
           }}
           title="Ir a Hoy / Ruta"
-          className="flex items-center gap-2.5 font-display text-lg sm:text-xl font-bold tracking-tight text-zinc-950 whitespace-nowrap shrink-0"
+          className="flex items-center gap-2.5 font-display text-base sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
         >
           {businessProfile.logoUrl ? (
             <img
               src={businessProfile.logoUrl}
               alt={businessProfile.appName}
-              className="w-7 h-7 rounded-lg object-cover border border-zinc-200 shrink-0"
+              className="w-7 h-7 rounded-lg object-cover border border-white/20 shrink-0"
             />
           ) : (
             <span
               style={{
-                backgroundColor: businessProfile.brandColor || '#059669',
+                backgroundColor: businessProfile.brandColor || '#14B8A6',
               }}
               className="w-2.5 h-2.5 rounded-full shrink-0"
             />
           )}
-          <span className="truncate max-w-[180px] sm:max-w-[260px]">
+          <span className="truncate max-w-[160px] sm:max-w-[240px]">
             {businessProfile.appName}
           </span>
         </a>
 
-        {/* Zone 2: 4 Clean Typographic Navigation Links */}
+        {/* Zone 2: Clean Typographic Navigation Links */}
         <nav
           aria-label="Navegación principal"
-          className="hidden md:flex items-center gap-8 text-sm font-medium"
+          className="hidden md:flex items-center gap-2 lg:gap-4 text-xs lg:text-sm font-medium"
         >
           <button
             type="button"
             onClick={() => setActiveTab('ruta')}
-            className={`min-h-[40px] py-2 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'ruta'
-                ? 'border-zinc-950 text-zinc-950 font-semibold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
+                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
             }`}
           >
             Hoy / Ruta
@@ -1963,10 +2012,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setActiveTab('agenda')}
-            className={`min-h-[40px] py-2 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'agenda'
-                ? 'border-zinc-950 text-zinc-950 font-semibold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
+                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
             }`}
           >
             Agenda
@@ -1975,10 +2024,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setActiveTab('clientes')}
-            className={`min-h-[40px] py-2 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'clientes'
-                ? 'border-zinc-950 text-zinc-950 font-semibold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
+                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
             }`}
           >
             Clientes
@@ -1987,18 +2036,87 @@ export default function App() {
           <button
             type="button"
             onClick={() => setActiveTab('facturacion')}
-            className={`min-h-[40px] py-2 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
               isMoreSectionActive
-                ? 'border-zinc-950 text-zinc-950 font-semibold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
+                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
             }`}
           >
             Mi Plata
           </button>
+
+          {isAdminUser && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('admin')}
+              data-testid="nav-admin-panel-btn"
+              className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
+                activeTab === 'admin'
+                  ? 'bg-teal-400 text-[#0B1D16] font-bold'
+                  : 'bg-white/10 text-teal-300 hover:bg-white/15 border border-teal-400/30'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+              <span>Panel Admin</span>
+            </button>
+          )}
         </nav>
 
-        {/* Zone 3: Primary Action CTA + Prominent Cerrar Sesión Button */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Zone 3: Primary Action CTA + Commercial/Account Controls + Cerrar Sesión */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {isAdminUser && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('admin')}
+              className="md:hidden min-h-[34px] inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-teal-400 text-[#0B1D16] whitespace-nowrap shrink-0"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+              <span>Admin</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsFirstTimeWhiteLabelSetup(false);
+              setIsWhiteLabelModalOpen(true);
+            }}
+            data-testid="open-whitelabel-btn"
+            title="Configurar marca propia, logo, ciudad y precios"
+            className="hidden lg:inline-flex min-h-[36px] items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-teal-300 shrink-0" />
+            <span>Mi Marca</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsSubscriptionModalOpen(true)}
+            data-testid="open-subscription-btn"
+            title="Licencia Comercial de Pago Único"
+            className="min-h-[36px] inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
+          >
+            <CreditCard className="w-3.5 h-3.5 text-teal-300 shrink-0" />
+            <span className="hidden sm:inline">
+              {subscriptionEval.badgeText}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsAuthModalOpen(true)}
+            data-testid="open-firebase-auth-btn"
+            title="Ver estado de cuenta y respaldo en la nube"
+            className="hidden sm:inline-flex min-h-[36px] items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
+          >
+            <UserIcon className="w-3.5 h-3.5 text-teal-300 shrink-0" />
+            <span className="truncate max-w-[110px]">
+              {activeTenantSession?.email ||
+                firebaseUser?.email ||
+                'Cuenta'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -2008,7 +2126,7 @@ export default function App() {
               setModalDefaultTime('08:30');
               setIsClientModalOpen(true);
             }}
-            className="min-h-[38px] px-3.5 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-zinc-950 rounded-xl hover:bg-zinc-800 active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
+            className="min-h-[36px] px-3 sm:px-3.5 py-1.5 text-xs font-bold text-[#0B1D16] bg-teal-400 rounded-xl hover:bg-teal-300 active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
           >
             + Nuevo Corte
           </button>
@@ -2018,10 +2136,10 @@ export default function App() {
             onClick={handleFullLogout}
             data-testid="logout-btn"
             title="Cerrar sesión y volver a la pantalla de acceso"
-            className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 hover:text-red-700 bg-zinc-100 hover:bg-red-50 rounded-xl transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[36px] inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:text-white bg-white/10 hover:bg-red-600/80 rounded-xl transition-colors whitespace-nowrap shrink-0"
           >
             <LogOut className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Cerrar Sesión</span>
+            <span className="hidden sm:inline">Salir</span>
           </button>
         </div>
       </header>
@@ -2031,79 +2149,6 @@ export default function App() {
         id="main-workspace"
         className="flex-1 max-w-[1400px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4"
       >
-        {/* Minimalist Utility & Voice Strip + Multi-Tenant SaaS Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-zinc-200/70">
-          <VoiceAccessibilityPanel
-            activeDate={activeDate}
-            todayReferenceStr={TODAY_REFERENCE}
-            baseCity={baseLocation.city}
-            activeDateJobs={activeDateJobs}
-            activeDayWeather={activeDayWeather}
-            preferences={accessibilityPrefs}
-            isSpeaking={isSpeaking}
-            lastVoiceStatus={lastVoiceStatus}
-            onUpdatePreferences={setAccessibilityPrefs}
-            onSpeakText={speakTextOutLoud}
-            onStopSpeaking={stopSpeakingOutLoud}
-            onExecuteVoiceCommand={handleExecuteVoiceCommand}
-          />
-
-          <div className="flex flex-wrap items-center gap-1.5 ml-auto">
-            <button
-              type="button"
-              onClick={() => {
-                setIsFirstTimeWhiteLabelSetup(false);
-                setIsWhiteLabelModalOpen(true);
-              }}
-              data-testid="open-whitelabel-btn"
-              className="min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-100 text-zinc-800 hover:bg-zinc-200/80 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>Mi Marca y Precios</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsSubscriptionModalOpen(true)}
-              data-testid="open-subscription-btn"
-              className={`min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                subscriptionEval.isProActive
-                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200/80'
-                  : 'bg-sky-50 text-sky-900 border border-sky-200/80 hover:bg-sky-100'
-              }`}
-            >
-              <CreditCard className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-              <span>{subscriptionEval.badgeText}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsAuthModalOpen(true)}
-              data-testid="open-firebase-auth-btn"
-              className={`min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                firebaseUser || activeTenantSession
-                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100'
-                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200/80'
-              }`}
-            >
-              {firebaseUser || activeTenantSession ? (
-                <>
-                  <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="truncate max-w-[140px]">
-                    {activeTenantSession?.email ||
-                      firebaseUser?.email ||
-                      'Cuenta Activa'}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <UserIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                  <span>Modo Demo</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
 
         {routeNotice && (
           <div
@@ -2907,22 +2952,6 @@ export default function App() {
                                       <span>Ficha cliente</span>
                                     </button>
                                   )}
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      speakTextOutLoud(
-                                        buildStopSpeechText(
-                                          job,
-                                          clientHistory.lastAmount
-                                        )
-                                      )
-                                    }
-                                    className="inline-flex items-center gap-1 font-medium text-zinc-600 hover:text-zinc-950 hover:underline"
-                                  >
-                                    <Volume2 className="w-3 h-3" />
-                                    <span>Escuchar</span>
-                                  </button>
                                 </div>
 
                                 {!isCompleted && (
@@ -3179,12 +3208,22 @@ export default function App() {
             onDeleteEquipment={handleDeleteEquipment}
           />
         )}
+
+        {/* TAB 7: PANEL EXCLUSIVO DE ADMINISTRADOR (CONTROL DE ACCESO MANUAL) */}
+        {activeTab === 'admin' && isAdminUser && (
+          <AdminControlPanelView
+            currentUserEmail={activeUserEmail || 'hz.mdiego@gmail.com'}
+            onShowToast={showBanner}
+          />
+        )}
       </main>
 
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Navegación móvil"
-        className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-zinc-200 grid grid-cols-4 h-14 px-2"
+        className={`md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-zinc-200 grid ${
+          isAdminUser ? 'grid-cols-5' : 'grid-cols-4'
+        } h-14 px-2`}
       >
         <button
           type="button"
@@ -3237,6 +3276,21 @@ export default function App() {
           <BarChart3 className="w-4 h-4" />
           <span>Mi Plata</span>
         </button>
+
+        {isAdminUser && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('admin')}
+            className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
+              activeTab === 'admin'
+                ? 'text-teal-900 bg-teal-100'
+                : 'text-teal-700'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Admin</span>
+          </button>
+        )}
       </nav>
 
       {/* Firebase Authentication & Multi-Tenant Account Modal */}
@@ -3261,6 +3315,7 @@ export default function App() {
           setIsWhiteLabelModalOpen(true);
         }}
         onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        onOpenAdminPanel={() => setActiveTab('admin')}
         onForceCloudSync={handleForceCloudSync}
         onAuthSuccessBanner={showBanner}
       />

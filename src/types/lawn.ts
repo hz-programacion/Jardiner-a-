@@ -133,12 +133,10 @@ export interface BusinessProfileConfig {
 }
 
 export type SubscriptionPlanId =
-  | 'trial'
-  | 'pro_monthly'
-  | 'pro_annual'
-  | 'installed_license';
+  | 'evaluation'
+  | 'single_payment_license';
 
-export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'expired';
+export type SubscriptionStatus = 'trialing' | 'active' | 'expired';
 
 export interface SubscriptionPaymentRecord {
   id: string;
@@ -146,7 +144,7 @@ export interface SubscriptionPaymentRecord {
   planId: SubscriptionPlanId;
   planLabel: string;
   amountArs: number;
-  method: 'Mercado Pago Suscripción' | 'Transferencia / Licencia' | 'Bonificado';
+  method: 'Mercado Pago Pago Único' | 'Transferencia / Clave de Licencia';
   referenceCode: string;
   status: 'Aprobado' | 'Pendiente';
 }
@@ -156,13 +154,10 @@ export interface TenantSubscriptionConfig {
   status: SubscriptionStatus;
   trialStartedAt: string;
   trialEndsAt: string;
-  currentPeriodEndsAt?: string;
-  mpPreapprovalPlanId?: string;
+  activatedAt?: string;
   mpCheckoutUrl?: string;
   sellerWhatsapp?: string;
-  monthlyPriceArs: number;
-  annualPriceArs: number;
-  installedLicensePriceArs: number;
+  singleLicensePriceArs: number;
   licenseKey?: string;
   paymentHistory: SubscriptionPaymentRecord[];
 }
@@ -190,6 +185,33 @@ export type OfflineActionType =
   | 'UPDATE_INVOICE'
   | 'UPDATE_EQUIPMENT'
   | 'UPDATE_BUSINESS_PROFILE';
+
+export type ApprovalStatus = 'pending' | 'approved' | 'revoked';
+export type UserRole = 'admin' | 'user';
+
+export interface ArgentinaCitySuggestion {
+  id: string;
+  city: string;
+  province: string;
+  fullName: string; // e.g., "Venado Tuerto, Santa Fe"
+  defaultAddress: string;
+  coordinates: LatLng;
+}
+
+export interface RegisteredTenantSummary {
+  uid: string;
+  email: string;
+  displayName: string;
+  businessName: string;
+  city: string;
+  registeredAt: string;
+  updatedAt?: string;
+  isApproved: boolean;
+  approvalStatus: ApprovalStatus;
+  role: UserRole;
+  licenseStatus?: SubscriptionStatus;
+  planId?: SubscriptionPlanId;
+}
 
 export interface StreetSuggestionItem {
   id: string;
@@ -285,40 +307,13 @@ export interface BackupPayload {
   baseLocation?: BaseLocationConfig;
   paymentProfile?: PaymentProfileConfig;
   subscription?: TenantSubscriptionConfig;
+  isApproved?: boolean;
+  approvalStatus?: ApprovalStatus;
+  role?: UserRole;
   properties: ClientProperty[];
   todayJobs: ScheduledJob[];
   invoices: InvoiceRecord[];
   expenses: OperationalExpense[];
   equipment: EquipmentItem[];
 }
-
-export type VoiceCommandIntent =
-  | 'ADD_CLIENT'
-  | 'COMPLETE_JOB'
-  | 'START_JOB'
-  | 'CHANGE_DATE'
-  | 'OPTIMIZE_ROUTE'
-  | 'RAIN_DELAY'
-  | 'READ_ROUTE'
-  | 'NAVIGATE_VIEW'
-  | 'UNKNOWN';
-
-export interface ParsedVoiceCommand {
-  intent: VoiceCommandIntent;
-  rawTranscript: string;
-  normalizedTranscript: string;
-  targetJobId?: string;
-  targetClientName?: string;
-  targetDateStr?: string;
-  targetView?: 'hoy' | 'agenda' | 'clientes' | 'finanzas';
-  spokenResponse: string;
-}
-
-export interface AccessibilityPreferences {
-  fontScale: 'normal' | 'large' | 'xlarge';
-  highContrastOutdoor: boolean;
-  autoSpeakConfirmations: boolean;
-  speechRate: number;
-}
-
 

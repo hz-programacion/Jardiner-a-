@@ -7,7 +7,9 @@ service cloud.firestore {
     // Collection: workspaces/{userId}
     // Document ID: {userId} (matches request.auth.uid)
     // Required fields: ownerUid, properties, todayJobs, invoices, expenses, equipment
-    // Optional fields: ownerEmail, updatedAtIso, updatedAt, businessProfile, baseLocation, paymentProfile
+    // Optional fields: ownerEmail, updatedAtIso, updatedAt, registeredAt,
+    //                  isApproved, approvalStatus, role,
+    //                  businessProfile, baseLocation, paymentProfile, subscription, license
     // ===============================================================
 
     function isAuthenticated() {
@@ -35,9 +37,15 @@ service cloud.firestore {
           'ownerEmail',
           'updatedAtIso',
           'updatedAt',
+          'registeredAt',
+          'isApproved',
+          'approvalStatus',
+          'role',
           'businessProfile',
           'baseLocation',
           'paymentProfile',
+          'subscription',
+          'license',
           'properties',
           'todayJobs',
           'invoices',
@@ -46,6 +54,9 @@ service cloud.firestore {
         ]) &&
         data.ownerUid is string &&
         data.ownerUid == userId &&
+        (!('isApproved' in data) || data.isApproved is bool) &&
+        (!('approvalStatus' in data) || data.approvalStatus in ['pending', 'approved', 'revoked']) &&
+        (!('role' in data) || data.role in ['admin', 'user']) &&
         data.properties is list && data.properties.size() <= 500 &&
         data.todayJobs is list && data.todayJobs.size() <= 1000 &&
         data.invoices is list && data.invoices.size() <= 1000 &&
@@ -53,12 +64,35 @@ service cloud.firestore {
         data.equipment is list && data.equipment.size() <= 200;
     }
 
+    function cannotSelfApproveOnCreate(data) {
+      return (!('isApproved' in data) || data.isApproved == false) &&
+        (!('approvalStatus' in data) || data.approvalStatus == 'pending') &&
+        (!('role' in data) || data.role == 'user');
+    }
+
+    function approvalFieldsUnchanged(newData, oldData) {
+      return newData.get('isApproved', false) == oldData.get('isApproved', false) &&
+        newData.get('approvalStatus', 'pending') == oldData.get('approvalStatus', 'pending') &&
+        newData.get('role', 'user') == oldData.get('role', 'user');
+    }
+
     match /workspaces/{userId} {
-      allow read: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow create: if isValidId(userId) && isOwner(userId) && isValidWorkspace(request.resource.data, userId);
-      allow update: if isValidId(userId) && isOwner(userId) &&
-        isValidWorkspace(request.resource.data, userId) &&
-        request.resource.data.ownerUid == resource.data.ownerUid;
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.ownerUid == request.auth.uid);
+
+      allow create: if isValidId(userId) && (
+        isAdmin() ||
+        (isOwner(userId) && isValidWorkspace(request.resource.data, userId) && cannotSelfApproveOnCreate(request.resource.data))
+      );
+
+      allow update: if isValidId(userId) && (
+        isAdmin() ||
+        (isOwner(userId) &&
+          isValidWorkspace(request.resource.data, userId) &&
+          request.resource.data.ownerUid == resource.data.ownerUid &&
+          approvalFieldsUnchanged(request.resource.data, resource.data))
+      );
+
       allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
     }
 
@@ -68,3 +102,4 @@ service cloud.firestore {
     }
   }
 }
+
