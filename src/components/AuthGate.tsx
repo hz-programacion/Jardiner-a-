@@ -533,40 +533,52 @@ export function AuthGate({
   };
 
   const formCard = (
-    <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xl space-y-5 relative">
+    <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-5 sm:p-8 shadow-2xl space-y-5 relative break-words">
       {!isFullScreenGate && (
         <button
           type="button"
           onClick={onCloseModal}
           aria-label="Cerrar ventana de cuenta"
-          className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-900 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-900 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
       )}
 
-      {/* Header */}
-      <div className="space-y-1.5 pr-6">
-        <div className="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-teal-700 font-bold">
-          <span className="w-2 h-2 rounded-full bg-teal-600" />
-          <span>SISTEMA FEDERAL ARGENTINA · LICENCIA PAGO ÚNICO</span>
+      {/* Brand Identity Header */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-[#0B1D16] text-teal-300 font-display font-extrabold text-base flex items-center justify-center shrink-0 shadow-xs">
+            P
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-display font-extrabold text-base sm:text-lg tracking-normal text-slate-900 leading-tight break-words">
+              PastoPro
+            </div>
+            <div className="text-[11px] font-mono uppercase tracking-wider text-teal-700 font-semibold">
+              Gestión Operativa de Parques y Lotes
+            </div>
+          </div>
         </div>
-        <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-900">
-          {effectiveSession
-            ? 'Cuenta y Sesión Activa'
-            : mode === 'login'
-              ? 'Ingresar a tu Cuenta'
+
+        <div className="pt-2 border-t border-slate-100">
+          <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
+            {effectiveSession
+              ? 'Cuenta y Sesión Activa'
+              : mode === 'login'
+                ? 'Iniciar Sesión'
+                : mode === 'register'
+                  ? 'Crear Cuenta Nueva'
+                  : 'Recuperar Contraseña'}
+          </h1>
+          <p className="text-xs text-slate-500 leading-relaxed mt-1 break-words">
+            {effectiveSession
+              ? 'Tu sesión opera con datos aislados, GPS calibrado para tu localidad y respaldo Cloud Firestore.'
               : mode === 'register'
-                ? 'Registrar Nueva Cuenta'
-                : 'Recuperar Contraseña'}
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-          {effectiveSession
-            ? 'Tu sesión opera con datos aislados, GPS calibrado para tu localidad y respaldo Cloud Firestore.'
-            : mode === 'register'
-              ? 'Ingresá los datos de tu emprendimiento y tu localidad de Argentina. El alta requiere validación de pago único.'
-              : 'Accedé con tu correo electrónico y contraseña para administrar tu hoja de ruta, clientes y caja.'}
-        </p>
+                ? 'Ingresá los datos de tu emprendimiento y tu localidad de Argentina.'
+                : 'Accedé con tu correo y contraseña para gestionar tu ruta, clientes y caja.'}
+          </p>
+        </div>
       </div>
 
       {effectiveSession ? (
@@ -582,7 +594,7 @@ export function AuthGate({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-extrabold text-slate-900 truncate">
+                  <span className="text-sm font-extrabold text-slate-900 break-words">
                     {effectiveSession.businessName ||
                       appName ||
                       effectiveSession.displayName}
@@ -599,10 +611,10 @@ export function AuthGate({
               </div>
             </div>
 
-            <div className="pt-2.5 border-t border-slate-200 flex items-center justify-between text-xs">
+            <div className="pt-2.5 border-t border-slate-200 flex items-center justify-between gap-2 text-xs flex-wrap">
               <span className="text-slate-500 font-medium">Estado Acceso:</span>
               <span className="font-semibold text-teal-700 inline-flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" />
+                <Check className="w-3.5 h-3.5 shrink-0" />
                 <span>
                   {isCurrentAdmin
                     ? 'Administrador Autorizado'
@@ -611,11 +623,11 @@ export function AuthGate({
               </span>
             </div>
 
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
               <span className="text-slate-500 font-medium">Sincronización:</span>
               <span className="font-semibold text-slate-800 inline-flex items-center gap-1">
                 {cloudSyncState === 'syncing' && (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-600" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-600 shrink-0" />
                 )}
                 <span>
                   {cloudSyncState === 'synced'
@@ -628,7 +640,7 @@ export function AuthGate({
             </div>
 
             {cloudSyncMessage && (
-              <p className="text-[11px] text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200">
+              <p className="text-[11px] text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 break-words">
                 {cloudSyncMessage}
               </p>
             )}
@@ -642,10 +654,10 @@ export function AuthGate({
                   onCloseModal();
                   onOpenWhiteLabelWizard();
                 }}
-                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer text-center break-words"
               >
                 <Sparkles className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                <span className="truncate">Marca, Logo y Tarifas</span>
+                <span>Marca, Logo y Tarifas</span>
               </button>
             )}
             {onOpenSubscriptionModal && (
@@ -655,10 +667,10 @@ export function AuthGate({
                   onCloseModal();
                   onOpenSubscriptionModal();
                 }}
-                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-colors cursor-pointer"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-colors cursor-pointer text-center break-words"
               >
                 <CreditCard className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                <span className="truncate">Licencia Pago Único</span>
+                <span>Licencia Pago Único</span>
               </button>
             )}
           </div>
@@ -670,10 +682,10 @@ export function AuthGate({
                 onCloseModal();
                 onOpenAdminPanel();
               }}
-              className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-teal-300 bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+              className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-teal-300 bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer text-center break-words"
             >
               <ShieldCheck className="w-4 h-4 text-teal-400 shrink-0" />
-              <span>Abrir Panel de Administrador (Aprobar / Revocar Usuarios)</span>
+              <span>Panel de Administrador (Aprobar Usuarios)</span>
             </button>
           )}
 
@@ -682,7 +694,7 @@ export function AuthGate({
               type="button"
               onClick={onForceCloudSync}
               disabled={cloudSyncState === 'syncing'}
-              className="flex-1 min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+              className="flex-1 min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl transition-colors disabled:opacity-50 cursor-pointer text-center break-words"
             >
               <Cloud className="w-4 h-4 shrink-0" />
               <span>Sincronizar con Cloud</span>
@@ -693,7 +705,7 @@ export function AuthGate({
               onClick={handleLogoutClick}
               disabled={isSubmitting}
               data-testid="modal-logout-btn"
-              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors cursor-pointer"
+              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors cursor-pointer text-center break-words"
             >
               <LogOut className="w-4 h-4 shrink-0" />
               <span>Cerrar Sesión</span>
@@ -712,7 +724,7 @@ export function AuthGate({
                 setErrorMsg(null);
                 setInfoMsg(null);
               }}
-              className={`min-h-[38px] text-xs font-bold rounded-xl transition-all cursor-pointer ${
+              className={`min-h-[38px] px-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 mode === 'login'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -728,20 +740,20 @@ export function AuthGate({
                 setErrorMsg(null);
                 setInfoMsg(null);
               }}
-              className={`min-h-[38px] text-xs font-bold rounded-xl transition-all cursor-pointer ${
+              className={`min-h-[38px] px-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                 mode === 'register'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Crear Cuenta Nueva
+              Crear Cuenta
             </button>
           </div>
 
           {errorMsg && (
             <div
               role="alert"
-              className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-medium text-rose-900 leading-relaxed"
+              className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-medium text-rose-900 leading-relaxed break-words"
             >
               {errorMsg}
             </div>
@@ -750,7 +762,7 @@ export function AuthGate({
           {infoMsg && (
             <div
               role="status"
-              className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-xs font-medium text-teal-950 leading-relaxed"
+              className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-xs font-medium text-teal-950 leading-relaxed break-words"
             >
               {infoMsg}
             </div>
@@ -760,12 +772,12 @@ export function AuthGate({
             {mode === 'register' && (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <label
                       htmlFor="auth-business-name"
                       className="block text-xs font-semibold text-slate-700 mb-1.5"
                     >
-                      Nombre de tu Emprendimiento *
+                      Emprendimiento *
                     </label>
                     <div className="relative">
                       <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -776,17 +788,17 @@ export function AuthGate({
                         placeholder="Ej. Parques del Sur"
                         value={businessName}
                         onChange={(e) => setBusinessName(e.target.value)}
-                        className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
+                        className="w-full min-w-0 pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
                       />
                     </div>
                   </div>
 
-                  <div>
+                  <div className="min-w-0">
                     <label
                       htmlFor="auth-display-name"
                       className="block text-xs font-semibold text-slate-700 mb-1.5"
                     >
-                      Tu Nombre y Apellido *
+                      Nombre y Apellido *
                     </label>
                     <div className="relative">
                       <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -797,7 +809,7 @@ export function AuthGate({
                         placeholder="Ej. Martín Gómez"
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
+                        className="w-full min-w-0 pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
                       />
                     </div>
                   </div>
@@ -808,15 +820,15 @@ export function AuthGate({
                   id="auth-city-autocomplete"
                   label="Tu Ciudad / Localidad en Argentina *"
                   value={cityInput}
-                  placeholder='Escribí ej. "Venado", "Rosario", "Córdoba", "Pilar"...'
-                  helperText="Escribí las primeras letras y seleccioná la recomendación oficial para calibrar el GPS."
+                  placeholder='Escribí ej. "Venado", "Rosario", "Córdoba"...'
+                  helperText="Escribí las primeras letras y elegí tu ciudad para calibrar el GPS."
                   onChange={setCityInput}
                   onSelectCity={(sug) => setCityInput(sug.fullName)}
                 />
               </>
             )}
 
-            <div>
+            <div className="min-w-0">
               <label
                 htmlFor="auth-email"
                 className="block text-xs font-semibold text-slate-700 mb-1.5"
@@ -833,14 +845,14 @@ export function AuthGate({
                   placeholder="tu@correo.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full min-w-0 pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
                 />
               </div>
             </div>
 
             {mode !== 'reset' && (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
+              <div className="min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
                   <label
                     htmlFor="auth-password"
                     className="block text-xs font-semibold text-slate-700"
@@ -874,7 +886,7 @@ export function AuthGate({
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    className="w-full min-w-0 pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600"
                   />
                 </div>
               </div>
@@ -884,10 +896,10 @@ export function AuthGate({
               type="submit"
               disabled={isSubmitting}
               data-testid="auth-submit-btn"
-              className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+              className="w-full min-h-[46px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors disabled:opacity-50 cursor-pointer shadow-xs text-center break-words"
             >
               {isSubmitting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               ) : mode === 'login' ? (
                 <LogIn className="w-4 h-4 text-teal-400 shrink-0" />
               ) : mode === 'register' ? (
@@ -899,7 +911,7 @@ export function AuthGate({
                 {mode === 'login'
                   ? 'Iniciar Sesión'
                   : mode === 'register'
-                    ? 'Registrar Cuenta (Sujeta a Aprobación)'
+                    ? 'Registrar Cuenta'
                     : 'Enviar Enlace de Recuperación'}
               </span>
             </button>
@@ -919,7 +931,7 @@ export function AuthGate({
               type="button"
               onClick={handleGoogleAccess}
               disabled={isSubmitting}
-              className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer"
+              className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer text-center break-words"
             >
               <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
               <span>Continuar con Google</span>
@@ -930,19 +942,19 @@ export function AuthGate({
                 type="button"
                 onClick={handleQuickAdminAccess}
                 data-testid="quick-admin-login-btn"
-                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-colors cursor-pointer"
+                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-colors cursor-pointer text-center break-words"
               >
                 <Lock className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                <span className="truncate">Ingresar como Admin</span>
+                <span>Ingresar como Admin</span>
               </button>
 
               <button
                 type="button"
                 onClick={onContinueLocalMode}
                 data-testid="continue-local-mode-btn"
-                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer text-center break-words"
               >
-                <span className="truncate">Ver Demo Interactiva</span>
+                <span>Ver Demo Interactiva</span>
               </button>
             </div>
           </div>
@@ -953,76 +965,11 @@ export function AuthGate({
 
   if (isFullScreenGate) {
     return (
-      <div className="min-h-screen bg-[#0B1512] text-slate-900 grid grid-cols-1 lg:grid-cols-12">
-        {/* Left Architectural Showcase Column */}
-        <div className="lg:col-span-5 bg-[#0B1D16] text-white p-6 sm:p-10 lg:p-12 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-white/10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 font-display font-extrabold">
-                P
-              </div>
-              <div>
-                <span className="font-display font-extrabold text-lg tracking-tight text-white block leading-none">
-                  PastoPro Argentina
-                </span>
-                <span className="text-[11px] font-mono text-teal-300/90">
-                  Gestión de Parques, Quintas y Lotes
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="my-8 lg:my-auto space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-teal-500/15 border border-teal-400/30 text-teal-300 text-xs font-bold">
-              <Compass className="w-3.5 h-3.5" />
-              <span>Autocompletado GPS para toda la Argentina</span>
-            </div>
-
-            <h2 className="font-display text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight leading-tight text-white">
-              Tu ruta diaria, clientes y caja en un sistema limpio, rápido y sin saturación.
-            </h2>
-
-            <div className="space-y-3 text-xs sm:text-sm text-slate-300">
-              <div className="flex items-start gap-2.5">
-                <Check className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                <span>
-                  <strong className="text-white">
-                    Sugerencias inteligentes estilo Google Maps:
-                  </strong>{' '}
-                  escribí las primeras letras de tu ciudad o calle y evitá errores de GPS en cualquier provincia.
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <Check className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                <span>
-                  <strong className="text-white">
-                    Licencia Definitiva de Pago Único:
-                  </strong>{' '}
-                  sin abonos mensuales ni cargos recurrentes. Activación validada por administrador.
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <Check className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                <span>
-                  <strong className="text-white">
-                    Multi-empresa 100% aislada:
-                  </strong>{' '}
-                  configurá tu propio logo, CBU/Alias, precios por m² y cartera de clientes.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="text-[11px] text-slate-400 font-mono flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-white/10">
-            <span>Control de Acceso por Aprobación Manual</span>
-            <span className="text-teal-300">Argentina · Cloud Firestore</span>
-          </div>
-        </div>
-
-        {/* Right Form Workspace */}
-        <div className="lg:col-span-7 bg-[#F3F6F5] flex items-center justify-center p-4 sm:p-8 lg:p-12">
-          {formCard}
-        </div>
+      <div
+        data-testid="single-column-login-screen"
+        className="min-h-screen w-full bg-gradient-to-b from-[#0B1D16] via-[#0F261D] to-[#0B1512] text-slate-900 flex flex-col items-center justify-center p-4 sm:p-6 overflow-x-hidden"
+      >
+        {formCard}
       </div>
     );
   }

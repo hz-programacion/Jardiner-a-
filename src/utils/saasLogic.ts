@@ -68,8 +68,39 @@ export interface TenantWorkspaceBundle {
 
 export const DEFAULT_SINGLE_LICENSE_CONFIG = {
   singleLicensePriceArs: 85000,
-  defaultMpCheckoutUrl: 'https://mpago.la/2xPastoProLicenciaUnica',
+  defaultMpCheckoutUrl: '',
+  sellerAlias: 'pastopro.licencia.mp',
+  sellerCbu: '0000003100084920114502',
+  sellerHolder: 'Diego Hernández — PastoPro Argentina',
+  sellerBank: 'Mercado Pago / Transferencia Inmediata',
+  sellerWhatsapp: '+54 9 3462 458910',
+  mercadoPagoWebUrl: 'https://www.mercadopago.com.ar/home',
 };
+
+const LEGACY_PLACEHOLDER_MP_URLS = new Set([
+  'https://mpago.la/2xPastoProLicenciaUnica',
+  'https://mpago.la/pastopro',
+  'https://www.mercadopago.com.ar/home',
+]);
+
+/**
+ * Checks whether the tenant/admin has configured a real, non-placeholder Mercado Pago checkout link.
+ * Prevents redirecting users to example/placeholder shortlinks that show "Algo salió mal" on Mercado Pago.
+ */
+export function hasValidCustomMercadoPagoLink(url?: string | null): boolean {
+  const clean = (url || '').trim();
+  if (!clean) return false;
+  for (const legacy of LEGACY_PLACEHOLDER_MP_URLS) {
+    if (clean.toLowerCase().startsWith(legacy.toLowerCase())) {
+      return false;
+    }
+  }
+  return (
+    clean.startsWith('https://mpago.la/') ||
+    clean.startsWith('https://www.mercadopago.com') ||
+    clean.startsWith('https://mercadopago.com')
+  );
+}
 
 /**
  * Generates an isolated localStorage key per authenticated user (multi-tenant)
@@ -105,7 +136,11 @@ export function createInitialSubscriptionConfig(
     trialStartedAt: safeStart.toISOString().slice(0, 10),
     trialEndsAt: trialEnd.toISOString().slice(0, 10),
     mpCheckoutUrl: DEFAULT_SINGLE_LICENSE_CONFIG.defaultMpCheckoutUrl,
-    sellerWhatsapp: '+54 9 3462 458910',
+    sellerWhatsapp: DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp,
+    sellerAlias: DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias,
+    sellerCbu: DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu,
+    sellerHolder: DEFAULT_SINGLE_LICENSE_CONFIG.sellerHolder,
+    sellerBank: DEFAULT_SINGLE_LICENSE_CONFIG.sellerBank,
     singleLicensePriceArs: DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs,
     paymentHistory: [],
   };
@@ -131,6 +166,10 @@ export function normalizeTenantLicenseConfig(
     rawPlan === 'pro_annual' ||
     rawPlan === 'pro_monthly';
 
+  const rawMpUrl =
+    typeof raw.mpCheckoutUrl === 'string' ? raw.mpCheckoutUrl.trim() : '';
+  const sanitizedMpUrl = hasValidCustomMercadoPagoLink(rawMpUrl) ? rawMpUrl : '';
+
   return {
     planId: isActivated ? 'single_payment_license' : 'evaluation',
     status: isActivated
@@ -148,14 +187,27 @@ export function normalizeTenantLicenseConfig(
         : base.trialEndsAt,
     activatedAt:
       typeof raw.activatedAt === 'string' ? raw.activatedAt : undefined,
-    mpCheckoutUrl:
-      typeof raw.mpCheckoutUrl === 'string' && raw.mpCheckoutUrl.trim()
-        ? raw.mpCheckoutUrl.trim()
-        : base.mpCheckoutUrl,
+    mpCheckoutUrl: sanitizedMpUrl,
     sellerWhatsapp:
       typeof raw.sellerWhatsapp === 'string' && raw.sellerWhatsapp.trim()
         ? raw.sellerWhatsapp.trim()
         : base.sellerWhatsapp,
+    sellerAlias:
+      typeof raw.sellerAlias === 'string' && raw.sellerAlias.trim()
+        ? raw.sellerAlias.trim()
+        : base.sellerAlias,
+    sellerCbu:
+      typeof raw.sellerCbu === 'string' && raw.sellerCbu.trim()
+        ? raw.sellerCbu.trim()
+        : base.sellerCbu,
+    sellerHolder:
+      typeof raw.sellerHolder === 'string' && raw.sellerHolder.trim()
+        ? raw.sellerHolder.trim()
+        : base.sellerHolder,
+    sellerBank:
+      typeof raw.sellerBank === 'string' && raw.sellerBank.trim()
+        ? raw.sellerBank.trim()
+        : base.sellerBank,
     singleLicensePriceArs:
       typeof raw.singleLicensePriceArs === 'number' &&
       raw.singleLicensePriceArs > 0
@@ -388,18 +440,13 @@ export function buildMercadoPagoSinglePaymentUrl(
   payerEmail?: string | null
 ): string {
   const customUrl = (subscription.mpCheckoutUrl || '').trim();
-  if (
-    customUrl.startsWith('https://www.mercadopago.') ||
-    customUrl.startsWith('https://mpago.la/')
-  ) {
+  if (hasValidCustomMercadoPagoLink(customUrl)) {
     if (!payerEmail) return customUrl;
     const separator = customUrl.includes('?') ? '&' : '?';
     return `${customUrl}${separator}payer_email=${encodeURIComponent(payerEmail)}`;
   }
 
-  const baseCheckout = DEFAULT_SINGLE_LICENSE_CONFIG.defaultMpCheckoutUrl;
-  if (!payerEmail) return baseCheckout;
-  return `${baseCheckout}?payer_email=${encodeURIComponent(payerEmail)}`;
+  return DEFAULT_SINGLE_LICENSE_CONFIG.mercadoPagoWebUrl;
 }
 
 /**

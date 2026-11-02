@@ -5,6 +5,7 @@ import {
   Calendar,
   CheckCircle2,
   ClipboardCopy,
+  Clock,
   Download,
   Edit3,
   ExternalLink,
@@ -43,7 +44,9 @@ import {
   calculateSuggestedPrice,
   computeDetailedAnalytics,
   filterRecordsByPeriod,
+  getClientCutTimeHistory,
   getClientPriceHistory,
+  getTodayIsoLocal,
 } from '../utils/lawnLogic';
 import { NEIGHBORHOOD_COORDINATES } from '../data/seedData';
 import { StreetAddressAutocomplete } from './StreetAddressAutocomplete';
@@ -263,24 +266,43 @@ export function ClientsView({
                 prop.clientName,
                 invoices
               );
+              const cutTimeSummary = getClientCutTimeHistory(
+                prop.id,
+                prop.clientName,
+                invoices,
+                todayJobs,
+                prop.estimatedMinutes,
+                prop.areaSqm
+              );
               const cleanPhone = prop.phone.replace(/[^0-9]/g, '');
 
               return (
                 <div
                   key={prop.id}
-                  className="bg-white border border-slate-200 rounded-xl p-4 space-y-3"
+                  className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 min-w-0 break-words"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">
+                  <div className="flex items-start justify-between gap-2 min-w-0">
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-900 text-sm break-words">
                         {prop.clientName}
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5">
+                      <div className="text-xs text-slate-600 mt-0.5 break-words">
                         {prop.address} · {prop.neighborhood}
                       </div>
-                      <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
-                        {prop.propertyType} · {prop.areaSqm} m² ·{' '}
-                        {prop.frequency}
+                      <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums flex flex-wrap items-center gap-1.5">
+                        <span>
+                          {prop.propertyType} · {prop.areaSqm} m² ·{' '}
+                          {prop.frequency}
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-semibold">
+                          <Clock className="w-3 h-3 shrink-0" />
+                          <span>
+                            Prom:{' '}
+                            {cutTimeSummary.averageMinutes ??
+                              prop.estimatedMinutes}{' '}
+                            min
+                          </span>
+                        </span>
                       </div>
                     </div>
 
@@ -295,8 +317,8 @@ export function ClientsView({
                   </div>
 
                   {/* Cuánto se le cobró anteriormente */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-xs">
-                    <div>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs min-w-0">
+                    <div className="min-w-0 break-words">
                       <span className="font-semibold text-slate-700">
                         Último cobro:
                       </span>{' '}
@@ -307,6 +329,11 @@ export function ClientsView({
                         </span>
                       ) : (
                         <span className="text-slate-500">Sin cortes previos</span>
+                      )}
+                      {cutTimeSummary.lastDurationMinutes && (
+                        <div className="text-[11px] text-teal-800 font-mono mt-0.5">
+                          Último tiempo real: {cutTimeSummary.lastDurationMinutes} min (Est: {prop.estimatedMinutes} min)
+                        </div>
                       )}
                       {history.previousAmount && (
                         <div className="text-[11px] text-slate-500 font-mono mt-0.5">
@@ -321,7 +348,7 @@ export function ClientsView({
                       onClick={() => onViewClientHistory(prop)}
                       className="min-h-[34px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg shrink-0"
                     >
-                      <History className="w-3.5 h-3.5" />
+                      <History className="w-3.5 h-3.5 shrink-0" />
                       <span>Historial ({history.totalCutsCount})</span>
                     </button>
                   </div>
@@ -431,6 +458,14 @@ export function ClientsView({
                       prop.clientName,
                       invoices
                     );
+                    const cutTimeSummary = getClientCutTimeHistory(
+                      prop.id,
+                      prop.clientName,
+                      invoices,
+                      todayJobs,
+                      prop.estimatedMinutes,
+                      prop.areaSqm
+                    );
                     const cleanPhone = prop.phone.replace(/[^0-9]/g, '');
 
                     return (
@@ -438,11 +473,11 @@ export function ClientsView({
                         key={prop.id}
                         className="hover:bg-slate-50/80 transition-colors"
                       >
-                        <td className="py-3.5 px-4 align-top">
+                        <td className="py-3.5 px-4 align-top break-words">
                           <div className="font-semibold text-slate-900">
                             {prop.clientName}
                           </div>
-                          <div className="text-xs text-slate-500 font-mono mt-0.5 flex items-center gap-2">
+                          <div className="text-xs text-slate-500 font-mono mt-0.5 flex flex-wrap items-center gap-2">
                             <span>{prop.phone}</span>
                             <a
                               href={`https://wa.me/${cleanPhone}`}
@@ -454,7 +489,7 @@ export function ClientsView({
                             </a>
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 align-top">
+                        <td className="py-3.5 px-4 align-top break-words">
                           <div className="text-slate-800 font-medium">
                             {prop.address}
                           </div>
@@ -471,6 +506,15 @@ export function ClientsView({
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5">
                             {prop.frequency} · Próx: {prop.nextCutDate}
+                          </div>
+                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-mono font-semibold">
+                            <Clock className="w-3 h-3 shrink-0" />
+                            <span>
+                              Prom:{' '}
+                              {cutTimeSummary.averageMinutes ??
+                                prop.estimatedMinutes}{' '}
+                              min
+                            </span>
                           </div>
                         </td>
                         <td className="py-3.5 px-4 align-top">
@@ -1110,7 +1154,7 @@ interface BillingViewProps {
 }
 
 export function BillingView({
-  activeDate = '2026-11-01',
+  activeDate = getTodayIsoLocal(),
   properties,
   invoices,
   expenses,
@@ -1125,7 +1169,7 @@ export function BillingView({
 }: BillingViewProps) {
   const [period, setPeriod] = useState<PeriodFilter>('mes_actual');
   const [customFrom, setCustomFrom] = useState('2026-08-01');
-  const [customTo, setCustomTo] = useState('2026-11-01');
+  const [customTo, setCustomTo] = useState(activeDate);
   const [billingSection, setBillingSection] = useState<
     'recibos' | 'gastos' | 'estadisticas'
   >('recibos');
@@ -1144,11 +1188,11 @@ export function BillingView({
 
   const { filteredInvoices, filteredExpenses, periodLabel } = useMemo(
     () =>
-      filterRecordsByPeriod(invoices, expenses, period, '2026-11-01', {
+      filterRecordsByPeriod(invoices, expenses, period, activeDate, {
         from: customFrom,
         to: customTo,
       }),
-    [invoices, expenses, period, customFrom, customTo]
+    [invoices, expenses, period, activeDate, customFrom, customTo]
   );
 
   const visibleInvoices = useMemo(() => {
@@ -1495,10 +1539,18 @@ export function BillingView({
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-500 mt-1">
-                        {inv.address} · {inv.neighborhood || 'Zona Centro'} ·{' '}
-                        {inv.propertyType} ({inv.areaSqm} m²) · Fecha:{' '}
-                        <span className="font-mono">{inv.date}</span>
+                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1.5 break-words">
+                        <span>
+                          {inv.address} · {inv.neighborhood || 'Zona Centro'} ·{' '}
+                          {inv.propertyType} ({inv.areaSqm} m²) · Fecha:{' '}
+                          <span className="font-mono">{inv.date}</span>
+                        </span>
+                        {inv.actualDurationMinutes && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-mono font-semibold">
+                            <Clock className="w-3 h-3 shrink-0" />
+                            <span>{inv.actualDurationMinutes} min</span>
+                          </span>
+                        )}
                       </div>
                     </div>
 

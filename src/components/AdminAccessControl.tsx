@@ -29,6 +29,7 @@ import { buildSafeWhatsAppUrl, getTodayIsoLocal } from '../utils/lawnLogic';
 import {
   buildMercadoPagoSinglePaymentUrl,
   DEFAULT_SINGLE_LICENSE_CONFIG,
+  hasValidCustomMercadoPagoLink,
   isPrimaryAdminEmail,
   PENDING_APPROVAL_BLOCK_MESSAGE,
   PRIMARY_ADMIN_EMAIL,
@@ -65,17 +66,39 @@ export function PendingApprovalScreen({
 }: PendingApprovalScreenProps) {
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckMsg, setLastCheckMsg] = useState('');
+  const [copiedAlias, setCopiedAlias] = useState(false);
 
   const licensePrice =
     subscription?.singleLicensePriceArs ||
     DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs;
+  const hasCustomMp = hasValidCustomMercadoPagoLink(subscription?.mpCheckoutUrl);
   const mpUrl = buildMercadoPagoSinglePaymentUrl(subscription, userEmail);
-  const adminPhone = subscription?.sellerWhatsapp || '+54 9 3462 458910';
+  const adminPhone =
+    subscription?.sellerWhatsapp || DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp;
+  const activeAlias =
+    subscription?.sellerAlias || DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias;
+  const activeCbu =
+    subscription?.sellerCbu || DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu;
 
   const whatsappActivationUrl = buildSafeWhatsAppUrl(
     adminPhone,
-    `Hola Administrador (${PRIMARY_ADMIN_EMAIL}), registré mi cuenta en PastoPro y solicito la activación de mi Licencia de Acceso Único.\n\n• Correo: ${userEmail}\n• Empresa: ${businessName}\n• Localidad: ${city}\n• ID Cuenta: ${userUid}`
+    `Hola Administrador (${PRIMARY_ADMIN_EMAIL}), registré mi cuenta en PastoPro y solicito la activación de mi Licencia de Acceso Único ($${licensePrice.toLocaleString('es-AR')} ARS al alias ${activeAlias}).\n\n• Correo: ${userEmail}\n• Empresa: ${businessName}\n• Localidad: ${city}\n• ID Cuenta: ${userUid}`
   );
+
+  const handleCopyAlias = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(activeAlias);
+      }
+    } catch {
+      // ignore
+    }
+    setCopiedAlias(true);
+    setLastCheckMsg(
+      `✓ Alias "${activeAlias}" copiado. Abrí Mercado Pago, elegí "Transferir", pegá el alias y luego enviá el comprobante por WhatsApp.`
+    );
+    setTimeout(() => setCopiedAlias(false), 3500);
+  };
 
   const handleManualCheck = async () => {
     setIsChecking(true);
@@ -129,9 +152,9 @@ export function PendingApprovalScreen({
 
       {/* Main Gate Card */}
       <main className="relative z-10 max-w-2xl w-full mx-auto my-auto py-6">
-        <div className="bg-white text-slate-900 rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="bg-white text-slate-900 rounded-3xl shadow-2xl border border-slate-200 overflow-hidden break-words">
           <div
-            className={`px-6 py-5 border-b flex items-center justify-between gap-3 ${
+            className={`px-5 sm:px-6 py-5 border-b flex items-center justify-between gap-3 ${
               approvalStatus === 'revoked'
                 ? 'bg-rose-950 text-white border-rose-900'
                 : 'bg-slate-900 text-white border-slate-800'
@@ -157,14 +180,14 @@ export function PendingApprovalScreen({
                     ? 'Estado: Acceso Revocado'
                     : 'Estado: Pendiente de Aprobación'}
                 </span>
-                <h2 className="text-lg sm:text-xl font-extrabold tracking-tight truncate">
+                <h2 className="text-lg sm:text-xl font-extrabold tracking-tight break-words">
                   Validación de Licencia Requerida
                 </h2>
               </div>
             </div>
           </div>
 
-          <div className="p-6 sm:p-8 space-y-6">
+          <div className="p-5 sm:p-8 space-y-6">
             {/* Mandatory exact blocking alert */}
             <div
               role="alert"
@@ -172,8 +195,8 @@ export function PendingApprovalScreen({
               className="p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-300/90 text-amber-950 flex items-start gap-3.5"
             >
               <AlertTriangle className="w-6 h-6 text-amber-700 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-sm sm:text-base font-extrabold leading-snug text-amber-950">
+              <div className="space-y-1 min-w-0">
+                <p className="text-sm sm:text-base font-extrabold leading-snug text-amber-950 break-words">
                   {PENDING_APPROVAL_BLOCK_MESSAGE}
                 </p>
                 <p className="text-xs text-amber-900/80 leading-relaxed">
@@ -182,9 +205,9 @@ export function PendingApprovalScreen({
               </div>
             </div>
 
-            {/* User Account Details */}
+            {/* User Account & Official Mercado Pago Alias Details */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs">
-              <div>
+              <div className="min-w-0">
                 <span className="text-slate-500 font-medium block">
                   Correo de la Cuenta
                 </span>
@@ -192,21 +215,23 @@ export function PendingApprovalScreen({
                   {userEmail}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-slate-500 font-medium block">
                   Titular / Empresa
                 </span>
-                <span className="font-bold text-slate-900">
+                <span className="font-bold text-slate-900 break-words">
                   {userName} · {businessName}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-slate-500 font-medium block">
-                  Localidad Operativa
+                  Alias Mercado Pago Oficial
                 </span>
-                <span className="font-bold text-slate-900">{city}</span>
+                <span className="font-mono font-extrabold text-teal-800 break-all">
+                  {activeAlias} (CVU: {activeCbu})
+                </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-slate-500 font-medium block">
                   Valor Licencia Definitiva (Pago Único)
                 </span>
@@ -223,21 +248,36 @@ export function PendingApprovalScreen({
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <a
-                  href={mpUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors text-center"
-                >
-                  <ExternalLink className="w-4 h-4 shrink-0 text-teal-400" />
-                  <span>1. Abonar Pago Único (Mercado Pago)</span>
-                </a>
+                {hasCustomMp ? (
+                  <a
+                    href={mpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors text-center break-words"
+                  >
+                    <ExternalLink className="w-4 h-4 shrink-0 text-teal-400" />
+                    <span>1. Abonar Pago Único (Mercado Pago)</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleCopyAlias}
+                    className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors text-center cursor-pointer break-words"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-teal-400" />
+                    <span>
+                      {copiedAlias
+                        ? `✓ Alias ${activeAlias} Copiado`
+                        : `1. Copiar Alias MP (${activeAlias})`}
+                    </span>
+                  </button>
+                )}
 
                 <a
                   href={whatsappActivationUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors text-center"
+                  className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors text-center break-words"
                 >
                   <MessageCircle className="w-4 h-4 shrink-0" />
                   <span>2. Enviar Comprobante al Admin</span>
@@ -248,10 +288,10 @@ export function PendingApprovalScreen({
                 type="button"
                 onClick={handleManualCheck}
                 disabled={isChecking}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs sm:text-sm font-bold transition-colors cursor-pointer disabled:opacity-60"
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs sm:text-sm font-bold transition-colors cursor-pointer disabled:opacity-60 text-center break-words"
               >
                 <RefreshCw
-                  className={`w-4 h-4 ${isChecking ? 'animate-spin' : ''}`}
+                  className={`w-4 h-4 shrink-0 ${isChecking ? 'animate-spin' : ''}`}
                 />
                 <span>
                   {isChecking
@@ -261,7 +301,7 @@ export function PendingApprovalScreen({
               </button>
 
               {lastCheckMsg && (
-                <p className="text-xs font-semibold text-center text-slate-600 bg-slate-100 py-2 px-3 rounded-xl">
+                <p className="text-xs font-semibold text-center text-slate-700 bg-teal-50 border border-teal-200 py-2.5 px-3 rounded-xl break-words">
                   {lastCheckMsg}
                 </p>
               )}

@@ -40,6 +40,7 @@ import {
 import {
   calculateSuggestedPrice,
   computeNextCutDate,
+  getClientCutTimeHistory,
   getClientPriceHistory,
   getTodayIsoLocal,
   resolveCityCoordinates,
@@ -88,6 +89,7 @@ interface CompleteJobModalProps {
   invoices: InvoiceRecord[];
   paymentProfile?: PaymentProfileConfig;
   isOnline?: boolean;
+  initialDurationMinutes?: number | null;
   onClose: () => void;
   onConfirmComplete: (
     jobId: string,
@@ -95,7 +97,8 @@ interface CompleteJobModalProps {
     paymentMethod: PaymentMethod,
     finalPrice: number,
     updateClientBasePrice: boolean,
-    photoUrl?: string
+    photoUrl?: string,
+    actualDurationMinutes?: number
   ) => void;
 }
 
@@ -104,6 +107,7 @@ export function CompleteJobModal({
   invoices,
   paymentProfile,
   isOnline = true,
+  initialDurationMinutes,
   onClose,
   onConfirmComplete,
 }: CompleteJobModalProps) {
@@ -112,6 +116,9 @@ export function CompleteJobModal({
     useState<PaymentMethod>('Transferencia');
   const [finalPrice, setFinalPrice] = useState<string>(
     job ? String(job.price) : '0'
+  );
+  const [durationMinutes, setDurationMinutes] = useState<string>(
+    job ? String(job.actualDurationMinutes || job.estimatedMinutes || 45) : '45'
   );
   const [updateClientBasePrice, setUpdateClientBasePrice] =
     useState<boolean>(true);
@@ -124,8 +131,15 @@ export function CompleteJobModal({
       setPaymentMethod('Transferencia');
       setUpdateClientBasePrice(true);
       setPhotoUrl(job.photoUrl || '');
+      const defaultDur =
+        initialDurationMinutes && initialDurationMinutes > 0
+          ? initialDurationMinutes
+          : job.actualDurationMinutes && job.actualDurationMinutes > 0
+            ? job.actualDurationMinutes
+            : job.estimatedMinutes || 45;
+      setDurationMinutes(String(defaultDur));
     }
-  }, [job]);
+  }, [job, initialDurationMinutes]);
 
   if (!job) return null;
 
@@ -135,7 +149,22 @@ export function CompleteJobModal({
     job.clientName,
     invoices
   );
+  const cutTimeHistory = getClientCutTimeHistory(
+    job.propertyId,
+    job.clientName,
+    invoices,
+    [job],
+    job.estimatedMinutes,
+    job.areaSqm
+  );
   const referenceLastAmount = clientHistory.lastAmount || job.price;
+  const parsedDuration = Math.max(
+    5,
+    Math.round(Number(durationMinutes) || job.estimatedMinutes || 45)
+  );
+  const parsedPricePreview = Math.max(1000, Number(finalPrice) || job.price);
+  const hourlyYieldArs = Math.round((parsedPricePreview / parsedDuration) * 60);
+  const speedSqmPerHour = Math.round(((job.areaSqm || 200) / parsedDuration) * 60);
 
   const applyQuickAdjustment = (multiplier: number) => {
     const rounded = Math.round((referenceLastAmount * multiplier) / 500) * 500;
@@ -163,7 +192,8 @@ export function CompleteJobModal({
       paymentMethod,
       parsedPrice,
       updateClientBasePrice,
-      photoUrl || undefined
+      photoUrl || undefined,
+      parsedDuration
     );
   };
 
@@ -310,10 +340,87 @@ export function CompleteJobModal({
                 onChange={(e) => setUpdateClientBasePrice(e.target.checked)}
                 className="rounded border-slate-300 text-emerald-700"
               />
-              <span>
+              <span className="break-words">
                 Guardar este monto como la nueva tarifa habitual del cliente
               </span>
             </label>
+          </div>
+
+          {/* Control de Tiempo de Corte (Cuánto tardó en cortar el pasto) */}
+          <div
+            data-testid="complete-job-time-control"
+            className="p-3.5 bg-teal-50/70 border border-teal-200 rounded-xl space-y-2.5"
+          >
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label
+                htmlFor="actual-duration-minutes-input"
+                className="text-xs font-bold text-teal-950 flex items-center gap-1.5"
+              >
+                <Clock className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                <span>¿Cuánto tardaste en cortar el pasto? (min)</span>
+              </label>
+              <span className="text-[11px] font-mono text-teal-800">
+                Prom. cliente: {cutTimeHistory.averageMinutes} min
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="actual-duration-minutes-input"
+                data-testid="actual-duration-minutes-input"
+                type="number"
+                min={5}
+                max={600}
+                step={1}
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(e.target.value)}
+                className="w-24 px-3 py-2 bg-white border border-teal-300 rounded-lg text-sm font-bold font-mono tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
+              />
+              <div className="flex flex-wrap gap-1 flex-1">
+                {[
+                  {
+                    label: '-5m',
+                    val: Math.max(5, parsedDuration - 5),
+                  },
+                  {
+                    label: `Est. (${job.estimatedMinutes}m)`,
+                    val: job.estimatedMinutes || 45,
+                  },
+                  {
+                    label: '+5m',
+                    val: parsedDuration + 5,
+                  },
+                  {
+                    label: '+15m',
+                    val: parsedDuration + 15,
+                  },
+                ].map((btn) => (
+                  <button
+                    key={btn.label}
+                    type="button"
+                    onClick={() => setDurationMinutes(String(btn.val))}
+                    className="px-2 py-1.5 text-[11px] font-mono font-semibold bg-white border border-teal-200 rounded-lg hover:bg-teal-100 text-teal-950 cursor-pointer"
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-teal-200/70 text-[11px] font-mono text-teal-900">
+              <div>
+                Rendimiento:{' '}
+                <strong className="text-slate-900">
+                  ${hourlyYieldArs.toLocaleString('es-AR')}/h
+                </strong>
+              </div>
+              <div className="text-right">
+                Ritmo:{' '}
+                <strong className="text-slate-900">
+                  {speedSqmPerHour} m²/h
+                </strong>
+              </div>
+            </div>
           </div>
 
           {/* Opción 2: Foto "Antes / Después" del Lote Terminado */}
@@ -478,6 +585,7 @@ export function CompleteJobModal({
 interface ClientHistoryModalProps {
   client: ClientProperty | null;
   invoices: InvoiceRecord[];
+  jobs?: ScheduledJob[];
   onClose: () => void;
   onEditClient: (client: ClientProperty) => void;
   onSelectInvoiceReceipt: (invoice: InvoiceRecord) => void;
@@ -486,6 +594,7 @@ interface ClientHistoryModalProps {
 export function ClientHistoryModal({
   client,
   invoices,
+  jobs = [],
   onClose,
   onEditClient,
   onSelectInvoiceReceipt,
@@ -497,27 +606,41 @@ export function ClientHistoryModal({
     client.clientName,
     invoices
   );
+  const cutTimeSummary = getClientCutTimeHistory(
+    client.id,
+    client.clientName,
+    invoices,
+    jobs,
+    client.estimatedMinutes,
+    client.areaSqm
+  );
+  const durationByInvoiceId = new Map<string, number>();
+  for (const r of cutTimeSummary.records) {
+    if (r.invoiceId) {
+      durationByInvoiceId.set(r.invoiceId, r.durationMinutes);
+    }
+  }
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="client-history-title"
     >
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-xl w-full p-6 shadow-xl my-8">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div>
+      <div className="bg-white border border-slate-200 rounded-2xl max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-xl my-4 break-words">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
+          <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold uppercase tracking-wider text-emerald-800">
-              Historial de Precios y Visitas por Cliente
+              Historial de Precios, Tiempos de Corte y Visitas
             </div>
             <h2
               id="client-history-title"
-              className="text-lg font-bold text-slate-900 mt-0.5"
+              className="text-lg font-bold text-slate-900 mt-0.5 break-words"
             >
               {client.clientName}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5 break-words">
               {client.address} · {client.neighborhood} ({client.propertyType} ·{' '}
               {client.areaSqm} m²)
             </p>
@@ -526,29 +649,30 @@ export function ClientHistoryModal({
             type="button"
             onClick={onClose}
             aria-label="Cerrar historial"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-lg"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-lg shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="py-4 space-y-4">
+          {/* Resumen de Precios y Cobros */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl min-w-0">
               <div className="text-[11px] text-slate-500 font-medium">
                 Tarifa Actual
               </div>
-              <div className="text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+              <div className="text-sm sm:text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5 break-all">
                 ${client.basePrice.toLocaleString('es-AR')}
               </div>
               <div className="text-[11px] text-slate-500">{client.frequency}</div>
             </div>
 
-            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
+            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl min-w-0">
               <div className="text-[11px] text-emerald-900 font-medium">
                 Último Cobro
               </div>
-              <div className="text-base font-bold font-mono text-emerald-800 tabular-nums mt-0.5">
+              <div className="text-sm sm:text-base font-bold font-mono text-emerald-800 tabular-nums mt-0.5 break-all">
                 {history.lastAmount
                   ? `$${history.lastAmount.toLocaleString('es-AR')}`
                   : 'Sin reg.'}
@@ -558,11 +682,11 @@ export function ClientHistoryModal({
               </div>
             </div>
 
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl min-w-0">
               <div className="text-[11px] text-slate-500 font-medium">
                 Cobro Anterior
               </div>
-              <div className="text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+              <div className="text-sm sm:text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5 break-all">
                 {history.previousAmount
                   ? `$${history.previousAmount.toLocaleString('es-AR')}`
                   : '—'}
@@ -576,11 +700,11 @@ export function ClientHistoryModal({
               </div>
             </div>
 
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl min-w-0">
               <div className="text-[11px] text-slate-500 font-medium">
                 Total Histórico
               </div>
-              <div className="text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+              <div className="text-sm sm:text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5 break-all">
                 ${history.totalBilled.toLocaleString('es-AR')}
               </div>
               <div className="text-[11px] text-slate-500">
@@ -589,9 +713,90 @@ export function ClientHistoryModal({
             </div>
           </div>
 
+          {/* Panel de Control de Tiempo e Historial de Cuánto Tarda en Cortar el Pasto */}
+          <div
+            data-testid="client-cut-time-history-panel"
+            className="p-3.5 sm:p-4 rounded-2xl bg-[#0B1D16] text-white space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-teal-400 shrink-0" />
+                <span className="text-xs font-bold uppercase tracking-wider text-teal-300">
+                  Control de Tiempo e Historial de Corte
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-300">
+                Estimado base: {client.estimatedMinutes} min · {client.areaSqm} m²
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-300 block">
+                  Promedio por Corte
+                </span>
+                <span
+                  data-testid="client-avg-cut-minutes"
+                  className="text-base font-mono font-extrabold text-teal-300 tabular-nums"
+                >
+                  {cutTimeSummary.averageMinutes} min
+                </span>
+                <span className="text-[10px] text-slate-400 block font-mono">
+                  {cutTimeSummary.varianceFromEstimateMinutes === 0
+                    ? 'Exacto al estimado'
+                    : cutTimeSummary.varianceFromEstimateMinutes > 0
+                      ? `+${cutTimeSummary.varianceFromEstimateMinutes}m vs est.`
+                      : `${cutTimeSummary.varianceFromEstimateMinutes}m vs est.`}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-300 block">
+                  Último Tiempo Real
+                </span>
+                <span className="text-base font-mono font-extrabold text-white tabular-nums">
+                  {cutTimeSummary.lastDurationMinutes
+                    ? `${cutTimeSummary.lastDurationMinutes} min`
+                    : `${client.estimatedMinutes} min`}
+                </span>
+                <span className="text-[10px] text-slate-400 block font-mono">
+                  {cutTimeSummary.totalTimedCuts} cortes medidos
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-300 block">
+                  Rango (Rápido / Lento)
+                </span>
+                <span className="text-sm font-mono font-bold text-white tabular-nums block mt-0.5">
+                  {cutTimeSummary.fastestMinutes
+                    ? `${cutTimeSummary.fastestMinutes}m / ${cutTimeSummary.slowestMinutes}m`
+                    : `${client.estimatedMinutes}m`}
+                </span>
+                <span className="text-[10px] text-slate-400 block font-mono">
+                  {cutTimeSummary.avgSqmPerHour} m²/hora
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-300 block">
+                  Rentabilidad / Hora
+                </span>
+                <span className="text-sm font-mono font-extrabold text-emerald-300 tabular-nums block mt-0.5">
+                  {cutTimeSummary.avgRevenuePerHour > 0
+                    ? `$${cutTimeSummary.avgRevenuePerHour.toLocaleString('es-AR')}/h`
+                    : `$${Math.round((client.basePrice / Math.max(10, client.estimatedMinutes)) * 60).toLocaleString('es-AR')}/h`}
+                </span>
+                <span className="text-[10px] text-slate-400 block">
+                  Según tiempo real
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div className="border border-slate-200 rounded-xl overflow-hidden">
-            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 text-xs font-bold text-slate-700 flex items-center justify-between">
-              <span>Detalle Cronológico de Cortes y Cobros</span>
+            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 text-xs font-bold text-slate-700 flex flex-wrap items-center justify-between gap-2">
+              <span>Detalle Cronológico de Cortes, Tiempos y Cobros</span>
               <span className="font-mono text-[11px] text-slate-500">
                 {history.records.length} registros
               </span>
@@ -603,75 +808,85 @@ export function ClientHistoryModal({
               </div>
             ) : (
               <div className="divide-y divide-slate-200 max-h-72 overflow-y-auto">
-                {history.records.map((rec, index) => (
-                  <div
-                    key={rec.id}
-                    className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-slate-900">
-                          {rec.date}
-                        </span>
-                        <span className="text-slate-300">·</span>
-                        <span className="font-mono text-xs text-slate-500">
-                          {rec.invoiceNumber}
-                        </span>
-                        {index === 0 && (
-                          <span className="text-[11px] font-semibold text-emerald-700">
-                            (Último)
+                {history.records.map((rec, index) => {
+                  const durMin =
+                    rec.actualDurationMinutes ||
+                    durationByInvoiceId.get(rec.id) ||
+                    client.estimatedMinutes;
+                  return (
+                    <div
+                      key={rec.id}
+                      className="p-3.5 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-slate-900">
+                            {rec.date}
                           </span>
-                        )}
+                          <span className="text-slate-300">·</span>
+                          <span className="font-mono text-xs text-slate-500">
+                            {rec.invoiceNumber}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-[11px] font-mono font-bold text-teal-900">
+                            <Clock className="w-3 h-3 text-teal-700" />
+                            <span>{durMin} min</span>
+                          </span>
+                          {index === 0 && (
+                            <span className="text-[11px] font-semibold text-emerald-700">
+                              (Último)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5 break-words">
+                          {rec.tasksCompleted.join(' · ')}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5">
-                        {rec.tasksCompleted.join(' · ')}
-                      </div>
-                    </div>
 
-                    <div className="text-right shrink-0 flex items-center gap-2.5">
-                      <div>
-                        <div className="font-mono font-bold text-sm text-slate-900 tabular-nums">
-                          ${rec.amount.toLocaleString('es-AR')}
+                      <div className="text-right shrink-0 flex items-center gap-2.5">
+                        <div>
+                          <div className="font-mono font-bold text-sm text-slate-900 tabular-nums">
+                            ${rec.amount.toLocaleString('es-AR')}
+                          </div>
+                          <div
+                            className={`text-[11px] font-semibold ${
+                              rec.status === 'Pagado'
+                                ? 'text-emerald-700'
+                                : 'text-amber-700'
+                            }`}
+                          >
+                            {rec.status}
+                            {rec.paymentMethod ? ` · ${rec.paymentMethod}` : ''}
+                          </div>
                         </div>
-                        <div
-                          className={`text-[11px] font-semibold ${
-                            rec.status === 'Pagado'
-                              ? 'text-emerald-700'
-                              : 'text-amber-700'
-                          }`}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onSelectInvoiceReceipt(rec);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
                         >
-                          {rec.status}
-                          {rec.paymentMethod ? ` · ${rec.paymentMethod}` : ''}
-                        </div>
+                          Ver
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onClose();
-                          onSelectInvoiceReceipt(rec);
-                        }}
-                        className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
-                      >
-                        Ver
-                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
           <button
             type="button"
             onClick={() => {
               onClose();
               onEditClient(client);
             }}
-            className="min-h-[42px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
+            className="min-h-[42px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 break-words"
           >
-            <TrendingUp className="w-3.5 h-3.5" />
+            <TrendingUp className="w-3.5 h-3.5 shrink-0" />
             <span>Ajustar Tarifa o Datos del Cliente</span>
           </button>
 
@@ -2028,14 +2243,22 @@ export function InvoiceReceiptModal({
               {invoice.address} ({invoice.propertyType} · {invoice.areaSqm} m²)
             </span>
           </div>
-          <div className="flex justify-between text-xs text-slate-600">
+          <div className="flex justify-between gap-2 text-xs text-slate-600 flex-wrap">
             <span>Estado de pago:</span>
             <span className="font-semibold text-slate-900">
               {invoice.status}
               {invoice.paymentMethod ? ` · ${invoice.paymentMethod}` : ''}
             </span>
           </div>
-          <div className="flex justify-between text-xs text-slate-600">
+          {invoice.actualDurationMinutes && invoice.actualDurationMinutes > 0 && (
+            <div className="flex justify-between gap-2 text-xs text-slate-600 flex-wrap">
+              <span>Tiempo real de corte:</span>
+              <span className="font-mono font-bold text-teal-800">
+                {invoice.actualDurationMinutes} minutos
+              </span>
+            </div>
+          )}
+          <div className="flex justify-between gap-2 text-xs text-slate-600 flex-wrap">
             <span>Próximo corte programado:</span>
             <span className="font-mono font-medium text-slate-900">
               {invoice.nextScheduledDate}
@@ -2850,6 +3073,7 @@ export function EditInvoiceModal({
   const [neighborhood, setNeighborhood] = useState('');
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState('45');
   const [status, setStatus] = useState<PaymentStatus>('Pagado');
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>('Transferencia');
@@ -2864,6 +3088,7 @@ export function EditInvoiceModal({
       setNeighborhood(invoice.neighborhood || 'Zona Centro');
       setDate(invoice.date);
       setAmount(String(invoice.amount));
+      setDurationMinutes(String(invoice.actualDurationMinutes || 45));
       setStatus(invoice.status);
       setPaymentMethod(invoice.paymentMethod || 'Transferencia');
       setNextScheduledDate(invoice.nextScheduledDate);
@@ -2877,6 +3102,10 @@ export function EditInvoiceModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = Math.max(1000, Number(amount) || invoice.amount);
+    const parsedDuration = Math.max(
+      5,
+      Math.round(Number(durationMinutes) || invoice.actualDurationMinutes || 45)
+    );
     const parsedTasks = tasksText
       .split(',')
       .map((t) => t.trim())
@@ -2890,6 +3119,7 @@ export function EditInvoiceModal({
         neighborhood: neighborhood.trim() || invoice.neighborhood,
         date: date || invoice.date,
         amount: parsedAmount,
+        actualDurationMinutes: parsedDuration,
         status,
         paymentMethod: status === 'Pagado' ? paymentMethod : undefined,
         paidAt: status === 'Pagado' ? date || invoice.date : undefined,
@@ -2904,36 +3134,36 @@ export function EditInvoiceModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-invoice-modal-title"
     >
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-xl my-6 space-y-4">
+      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-xl my-4 space-y-4 break-words">
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3.5">
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] font-mono font-bold text-emerald-800">
               EDITAR COMPROBANTE EMITIDO · {invoice.invoiceNumber}
             </div>
             <h2
               id="edit-invoice-modal-title"
-              className="text-lg font-bold text-slate-900 mt-0.5"
+              className="text-lg font-bold text-slate-900 mt-0.5 break-words"
             >
-              Corregir Datos del Recibo y Cobro
+              Corregir Datos del Recibo, Tiempo y Cobro
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Cerrar edición de recibo"
-            className="min-h-[42px] min-w-[42px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-lg"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-lg shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label
                 htmlFor="edit-invoice-client-input"
@@ -2955,7 +3185,7 @@ export function EditInvoiceModal({
                 htmlFor="edit-invoice-amount-input"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Monto Cobrado / Facturado ($)
+                Monto Cobrado ($)
               </label>
               <input
                 id="edit-invoice-amount-input"
@@ -2965,6 +3195,25 @@ export function EditInvoiceModal({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className="w-full px-3 py-2 text-sm font-mono font-bold text-slate-900 border border-slate-300 rounded-lg tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="edit-invoice-duration-input"
+                className="block text-xs font-semibold text-teal-900 mb-1"
+              >
+                Tiempo Corte (min)
+              </label>
+              <input
+                id="edit-invoice-duration-input"
+                type="number"
+                min={5}
+                max={600}
+                step={1}
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono font-bold text-teal-900 border border-teal-300 rounded-lg tabular-nums bg-teal-50/40"
               />
             </div>
           </div>
@@ -3103,12 +3352,12 @@ export function EditInvoiceModal({
               onChange={(e) => setSyncClientBasePrice(e.target.checked)}
               className="rounded border-slate-300 text-emerald-700"
             />
-            <span>
+            <span className="break-words">
               Actualizar también la tarifa habitual en la ficha de este cliente
             </span>
           </label>
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}

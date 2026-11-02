@@ -39,6 +39,22 @@
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+
+  /* Prevent horizontal overflow on mobile viewports across buttons, badges, and forms */
+  button,
+  a {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  input,
+  select,
+  textarea {
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
 }
 
 /* Architectural SaaS Surfaces */
@@ -47,11 +63,13 @@
   border: 1px solid #e2e8f0;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.03),
-    0 4px 12px -4px rgba(15, 23, 42, 0.03);
+    0 4px 12px -4px rgba(15, 23, 42, 0.04);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .surface-glass-bar {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid #e2e8f0;
@@ -81,6 +99,26 @@
   box-shadow:
     0 0 0 1px rgba(13, 148, 136, 0.25),
     0 12px 24px -8px rgba(13, 148, 136, 0.12);
+}
+
+/* Responsive scroll & word-break helpers */
+.responsive-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.safe-break-words {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  /* Ensure multi-word buttons wrap gracefully on narrow mobile screens instead of clipping */
+  button:not(.no-wrap-btn) {
+    white-space: normal;
+    line-height: 1.25;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

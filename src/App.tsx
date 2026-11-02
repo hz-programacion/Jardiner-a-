@@ -15,6 +15,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Cloud,
   CloudRain,
   CloudSun,
@@ -28,6 +29,7 @@ import {
   MapPin,
   MessageCircle,
   Navigation,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -36,6 +38,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Timer,
   Trash2,
   User as UserIcon,
   Users,
@@ -72,8 +75,10 @@ import {
   completeJobAndCreateInvoice,
   computeEndTimeFromStart,
   deleteClientPropertyFromState,
+  formatStopwatchSeconds,
   generateGoogleSheetsTsv,
   generateSpreadsheetCsv,
+  getClientCutTimeHistory,
   getClientPriceHistory,
   getTodayIsoLocal,
   getWeatherForDate,
@@ -495,6 +500,26 @@ export default function App() {
     null
   );
   const [routeNotice, setRouteNotice] = useState<string | null>(null);
+
+  // Live Mowing Stopwatch State (Control de tiempo real de corte)
+  const [activeCutTimer, setActiveCutTimer] = useState<{
+    jobId: string;
+    clientName: string;
+    elapsedSeconds: number;
+    isRunning: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!activeCutTimer?.isRunning) return;
+    const interval = window.setInterval(() => {
+      setActiveCutTimer((prev) =>
+        prev && prev.isRunning
+          ? { ...prev, elapsedSeconds: prev.elapsedSeconds + 1 }
+          : prev
+      );
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [activeCutTimer?.isRunning]);
 
   const showBanner = useCallback((msg: string) => {
     setRouteNotice(msg);
@@ -1251,11 +1276,40 @@ export default function App() {
     );
   };
 
-  const handleStartJob = (jobId: string) => {
+  const handleStartJob = (jobId: string, forceTimerToggle = false) => {
+    const targetJob = scheduledJobs.find((j) => j.id === jobId);
     const nowTime = new Date().toLocaleTimeString('es-AR', {
       hour: '2-digit',
       minute: '2-digit',
     });
+
+    if (forceTimerToggle) {
+      setScheduledJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobId && j.status === 'Pendiente'
+            ? { ...j, status: 'En Curso', startedAt: j.startedAt || nowTime }
+            : j
+        )
+      );
+      if (targetJob) {
+        setActiveCutTimer((prev) => {
+          if (prev?.jobId === jobId) {
+            return { ...prev, isRunning: !prev.isRunning };
+          }
+          return {
+            jobId,
+            clientName: targetJob.clientName,
+            elapsedSeconds: 0,
+            isRunning: true,
+          };
+        });
+      }
+      setSelectedJobId(jobId);
+      return;
+    }
+
+    const willBeInProgress = targetJob?.status !== 'En Curso';
+
     setScheduledJobs((prev) =>
       prev.map((j) =>
         j.id === jobId
@@ -1267,6 +1321,20 @@ export default function App() {
           : j
       )
     );
+
+    if (targetJob) {
+      setActiveCutTimer((prev) => {
+        if (prev?.jobId === jobId) {
+          return { ...prev, isRunning: willBeInProgress };
+        }
+        return {
+          jobId,
+          clientName: targetJob.clientName,
+          elapsedSeconds: 0,
+          isRunning: willBeInProgress,
+        };
+      });
+    }
     setSelectedJobId(jobId);
   };
 
@@ -1327,15 +1395,24 @@ export default function App() {
     paymentMethod: PaymentMethod,
     finalPrice: number,
     updateClientBasePrice: boolean,
-    photoUrl?: string
+    photoUrl?: string,
+    actualDurationMinutes?: number
   ) => {
     const targetJob = scheduledJobs.find((j) => j.id === jobId);
     if (!targetJob) return;
+
+    const resolvedDuration =
+      typeof actualDurationMinutes === 'number' && actualDurationMinutes > 0
+        ? Math.round(actualDurationMinutes)
+        : activeCutTimer?.jobId === jobId && activeCutTimer.elapsedSeconds > 0
+        ? Math.max(1, Math.round(activeCutTimer.elapsedSeconds / 60))
+        : targetJob.actualDurationMinutes || targetJob.estimatedMinutes;
 
     const adjustedJob: ScheduledJob = {
       ...targetJob,
       price: finalPrice,
       photoUrl: photoUrl || targetJob.photoUrl,
+      actualDurationMinutes: resolvedDuration,
     };
     const sequenceNumber = invoices.length + 1;
     const { updatedJob, invoice } = completeJobAndCreateInvoice(
@@ -1344,7 +1421,8 @@ export default function App() {
       paymentMethod,
       targetJob.scheduledDate,
       sequenceNumber,
-      photoUrl
+      photoUrl,
+      resolvedDuration
     );
 
     setScheduledJobs((prev) =>
@@ -1365,10 +1443,14 @@ export default function App() {
       )
     );
 
+    if (activeCutTimer?.jobId === jobId) {
+      setActiveCutTimer(null);
+    }
+
     const { queuedOffline } = recordAction(
       'COMPLETE_JOB',
       `Corte completado: ${targetJob.clientName}`,
-      `${invoice.invoiceNumber} · $${finalPrice.toLocaleString('es-AR')} (${
+      `${invoice.invoiceNumber} · $${finalPrice.toLocaleString('es-AR')} · ${resolvedDuration} min (${
         paidNow ? paymentMethod : 'Cuenta Cte.'
       })`
     );
@@ -1376,7 +1458,7 @@ export default function App() {
     setJobToComplete(null);
     setSelectedInvoiceReceipt(invoice);
     showBanner(
-      `Corte finalizado en ${targetJob.clientName}. Recibo ${invoice.invoiceNumber} emitido por $${finalPrice.toLocaleString('es-AR')}.${
+      `Corte finalizado en ${targetJob.clientName} (${resolvedDuration} min). Recibo ${invoice.invoiceNumber} emitido por $${finalPrice.toLocaleString('es-AR')}.${
         queuedOffline
           ? ' Guardado en cola offline para sincronizar al recuperar señal.'
           : ''
@@ -2156,7 +2238,7 @@ export default function App() {
             aria-live="polite"
             className="surface-command text-white text-xs sm:text-sm font-medium px-4 py-3 rounded-xl flex items-center justify-between gap-3"
           >
-            <span>{routeNotice}</span>
+            <span className="break-words min-w-0">{routeNotice}</span>
             <button
               type="button"
               onClick={() => setRouteNotice(null)}
@@ -2164,6 +2246,90 @@ export default function App() {
             >
               Cerrar
             </button>
+          </div>
+        )}
+
+        {/* Cronómetro de Corte en Vivo (Flotante cuando se está cortando un lote) */}
+        {activeCutTimer && (
+          <div
+            data-testid="active-cut-timer-banner"
+            className="bg-[#0B1D16] text-white border border-teal-500/40 rounded-2xl p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 shadow-md"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span
+                className={`w-3 h-3 rounded-full shrink-0 ${
+                  activeCutTimer.isRunning
+                    ? 'bg-teal-400 animate-pulse'
+                    : 'bg-amber-400'
+                }`}
+              />
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-teal-300">
+                  {activeCutTimer.isRunning
+                    ? 'Cronómetro de Corte en Curso'
+                    : 'Cronómetro en Pausa'}
+                </div>
+                <div className="text-sm font-bold text-white truncate">
+                  {activeCutTimer.clientName}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <div
+                data-testid="active-cut-timer-display"
+                className="font-mono text-xl sm:text-2xl font-bold text-teal-300 tabular-nums px-3 py-1 rounded-xl bg-white/10 border border-white/10"
+              >
+                {formatStopwatchSeconds(activeCutTimer.elapsedSeconds)}
+              </div>
+
+              <button
+                type="button"
+                data-testid="toggle-cut-timer-btn"
+                onClick={() =>
+                  setActiveCutTimer((prev) =>
+                    prev ? { ...prev, isRunning: !prev.isRunning } : null
+                  )
+                }
+                className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
+              >
+                {activeCutTimer.isRunning ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5" />
+                    <span>Pausar</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Reanudar</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                data-testid="finish-cut-timer-btn"
+                onClick={() => {
+                  const job = scheduledJobs.find(
+                    (j) => j.id === activeCutTimer.jobId
+                  );
+                  if (job) {
+                    setActiveCutTimer((prev) =>
+                      prev ? { ...prev, isRunning: false } : null
+                    );
+                    setJobToComplete(job);
+                  }
+                }}
+                className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-[#0B1D16] bg-teal-400 hover:bg-teal-300 rounded-xl transition-colors"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  Terminar y Guardar (
+                  {Math.max(1, Math.round(activeCutTimer.elapsedSeconds / 60))}{' '}
+                  min)
+                </span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -2661,6 +2827,19 @@ export default function App() {
                         job.clientName,
                         invoices
                       );
+                      const cutTimeSummary = getClientCutTimeHistory(
+                        job.propertyId,
+                        job.clientName,
+                        invoices,
+                        scheduledJobs,
+                        job.estimatedMinutes,
+                        job.areaSqm
+                      );
+                      const isTimerOnThisJob =
+                        activeCutTimer?.jobId === job.id;
+                      const recordedDurationMin =
+                        job.actualDurationMinutes ||
+                        matchingInvoice?.actualDurationMinutes;
                       const endTime = computeEndTimeFromStart(
                         job.scheduledTime || '08:00',
                         job.estimatedMinutes
@@ -2670,14 +2849,14 @@ export default function App() {
                         <article
                           key={job.id}
                           onClick={() => setSelectedJobId(job.id)}
-                          className={`surface-card card-interactive-lift rounded-2xl p-4 transition-all cursor-pointer ${
+                          className={`surface-card card-interactive-lift rounded-2xl p-4 transition-all cursor-pointer min-w-0 break-words ${
                             isSelected
                               ? 'stop-card-spotlight ring-1 ring-emerald-600/20'
                               : ''
                           } ${isCompleted ? 'opacity-75 bg-zinc-50/70' : ''}`}
                         >
                           {/* Clean Minimalist Header Row */}
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start justify-between gap-3 min-w-0">
                             <div className="flex items-start gap-3 min-w-0">
                               <div className="flex flex-col items-center gap-1 shrink-0">
                                 <div
@@ -2742,6 +2921,29 @@ export default function App() {
                                   </span>
                                   <span aria-hidden="true">·</span>
                                   <span>{job.legDistanceKm || 1.9} km</span>
+                                  <span aria-hidden="true">·</span>
+                                  <span
+                                    data-testid="stop-cut-time-badge"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200/80 text-[11px] font-semibold"
+                                  >
+                                    <Clock className="w-3 h-3 shrink-0" />
+                                    {isTimerOnThisJob ? (
+                                      <span>
+                                        {formatStopwatchSeconds(
+                                          activeCutTimer.elapsedSeconds
+                                        )}
+                                      </span>
+                                    ) : recordedDurationMin ? (
+                                      <span>Real: {recordedDurationMin} min</span>
+                                    ) : (
+                                      <span>
+                                        Prom:{' '}
+                                        {cutTimeSummary.averageMinutes ??
+                                          job.estimatedMinutes}{' '}
+                                        min
+                                      </span>
+                                    )}
+                                  </span>
                                   {isInProgress && (
                                     <>
                                       <span aria-hidden="true">·</span>
@@ -2752,11 +2954,11 @@ export default function App() {
                                   )}
                                 </div>
 
-                                <h3 className="font-display text-base font-bold text-zinc-950 mt-0.5 leading-snug">
+                                <h3 className="font-display text-base font-bold text-zinc-950 mt-0.5 leading-snug break-words">
                                   {job.clientName}
                                 </h3>
 
-                                <p className="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5">
+                                <p className="text-xs text-zinc-500 mt-0.5 flex flex-wrap items-center gap-1.5 break-words">
                                   <span>{job.address}</span>
                                   <span
                                     aria-hidden="true"
@@ -2802,7 +3004,7 @@ export default function App() {
                               className="mt-3.5 pt-3 border-t border-zinc-100 space-y-3"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <div className="text-xs text-zinc-600 space-y-1 bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
+                              <div className="text-xs text-zinc-600 space-y-1 bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60 break-words">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
                                     <span className="font-semibold text-zinc-900">
@@ -2824,6 +3026,96 @@ export default function App() {
                                 )}
                               </div>
 
+                              {/* Panel de Control de Tiempo e Historial de Corte en la Parada */}
+                              <div
+                                data-testid="stop-card-time-control"
+                                className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-200/80 flex flex-wrap items-center justify-between gap-2 text-xs"
+                              >
+                                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                  <Timer className="w-4 h-4 text-teal-700 shrink-0" />
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-teal-950">
+                                      Tiempo de corte:
+                                    </span>{' '}
+                                    {isTimerOnThisJob ? (
+                                      <span className="font-mono font-bold text-teal-800">
+                                        {formatStopwatchSeconds(
+                                          activeCutTimer.elapsedSeconds
+                                        )}{' '}
+                                        en curso
+                                      </span>
+                                    ) : recordedDurationMin ? (
+                                      <span className="font-mono font-bold text-teal-800">
+                                        {recordedDurationMin} min registrados
+                                      </span>
+                                    ) : (
+                                      <span className="font-mono text-teal-900">
+                                        Est. {job.estimatedMinutes} min · Prom.
+                                        cliente:{' '}
+                                        <strong>
+                                          {cutTimeSummary.averageMinutes ??
+                                            job.estimatedMinutes}{' '}
+                                          min
+                                        </strong>
+                                        {cutTimeSummary.lastDurationMinutes
+                                          ? ` (Últ: ${cutTimeSummary.lastDurationMinutes} min)`
+                                          : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {!isCompleted && (
+                                    <button
+                                      type="button"
+                                      data-testid="stop-start-timer-btn"
+                                      onClick={() =>
+                                        handleStartJob(job.id, true)
+                                      }
+                                      className={`min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                                        isTimerOnThisJob &&
+                                        activeCutTimer.isRunning
+                                          ? 'bg-amber-500 text-zinc-950'
+                                          : 'bg-[#0B1D16] text-teal-300 hover:bg-emerald-950'
+                                      }`}
+                                    >
+                                      {isTimerOnThisJob &&
+                                      activeCutTimer.isRunning ? (
+                                        <>
+                                          <Pause className="w-3 h-3" />
+                                          <span>Pausar Reloj</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="w-3 h-3" />
+                                          <span>
+                                            {isTimerOnThisJob
+                                              ? 'Reanudar Reloj'
+                                              : 'Cronometrar Corte'}
+                                          </span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                  {matchingProperty && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setHistoryClientModal(matchingProperty)
+                                      }
+                                      className="min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-teal-900 bg-white border border-teal-200 hover:bg-teal-100 transition-colors"
+                                    >
+                                      <History className="w-3 h-3" />
+                                      <span>
+                                        Historial de tiempos (
+                                        {cutTimeSummary.totalTimedCuts})
+                                      </span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
                               {!isCompleted ? (
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                   <button
@@ -2831,7 +3123,7 @@ export default function App() {
                                     onClick={() => setJobToComplete(job)}
                                     className="col-span-2 sm:col-span-1 min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors"
                                   >
-                                    <Check className="w-3.5 h-3.5" />
+                                    <Check className="w-3.5 h-3.5 shrink-0" />
                                     <span>Terminar y Cobrar</span>
                                   </button>
 
@@ -2844,7 +3136,7 @@ export default function App() {
                                         : 'bg-white text-zinc-800 border-zinc-200 hover:bg-zinc-50'
                                     }`}
                                   >
-                                    <Play className="w-3.5 h-3.5" />
+                                    <Play className="w-3.5 h-3.5 shrink-0" />
                                     <span>
                                       {isInProgress
                                         ? 'En Curso'
@@ -2858,7 +3150,7 @@ export default function App() {
                                     rel="noopener noreferrer"
                                     className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors"
                                   >
-                                    <Navigation className="w-3.5 h-3.5 text-emerald-600" />
+                                    <Navigation className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                     <span>Ir con GPS</span>
                                   </a>
 
@@ -2868,21 +3160,24 @@ export default function App() {
                                     rel="noopener noreferrer"
                                     className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors"
                                   >
-                                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                     <span>WhatsApp</span>
                                   </a>
                                 </div>
                               ) : (
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
-                                    <Check className="w-4 h-4" />
+                                    <Check className="w-4 h-4 shrink-0" />
                                     <span>
                                       Corte finalizado (
                                       {job.completedAt || 'Hoy'})
+                                      {recordedDurationMin
+                                        ? ` · ${recordedDurationMin} min`
+                                        : ''}
                                     </span>
                                   </span>
 
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex flex-wrap items-center gap-2">
                                     {matchingInvoice && (
                                       <button
                                         type="button"
@@ -2893,7 +3188,7 @@ export default function App() {
                                         }
                                         className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-zinc-900 rounded-xl hover:bg-zinc-800"
                                       >
-                                        <FileText className="w-3.5 h-3.5" />
+                                        <FileText className="w-3.5 h-3.5 shrink-0" />
                                         <span>Comprobante / Imprimir</span>
                                       </button>
                                     )}
@@ -2904,7 +3199,7 @@ export default function App() {
                                       }
                                       className="min-h-[36px] inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-zinc-600 bg-zinc-100 hover:bg-zinc-200 rounded-xl"
                                     >
-                                      <RotateCcw className="w-3.5 h-3.5" />
+                                      <RotateCcw className="w-3.5 h-3.5 shrink-0" />
                                       <span>Reabrir</span>
                                     </button>
                                   </div>
@@ -3367,6 +3662,11 @@ export default function App() {
         invoices={invoices}
         paymentProfile={paymentProfile}
         isOnline={isOnline}
+        initialDurationMinutes={
+          jobToComplete && activeCutTimer?.jobId === jobToComplete.id && activeCutTimer.elapsedSeconds > 0
+            ? Math.max(1, Math.round(activeCutTimer.elapsedSeconds / 60))
+            : jobToComplete?.actualDurationMinutes ?? jobToComplete?.estimatedMinutes ?? null
+        }
         onClose={() => setJobToComplete(null)}
         onConfirmComplete={handleConfirmCompleteJob}
       />
@@ -3374,6 +3674,7 @@ export default function App() {
       <ClientHistoryModal
         client={historyClientModal}
         invoices={invoices}
+        jobs={scheduledJobs}
         onClose={() => setHistoryClientModal(null)}
         onEditClient={(client) => {
           setEditingClient(client);

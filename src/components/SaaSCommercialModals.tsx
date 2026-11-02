@@ -3,10 +3,13 @@ import {
   Building2,
   Calculator,
   Check,
+  Copy,
   CreditCard,
   ExternalLink,
   Image as ImageIcon,
   MapPin,
+  MessageCircle,
+  Settings,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -20,6 +23,7 @@ import {
   TenantSubscriptionConfig,
 } from '../types/lawn';
 import {
+  buildSafeWhatsAppUrl,
   calculateSuggestedPrice,
   resolveCityCoordinates,
 } from '../utils/lawnLogic';
@@ -28,6 +32,7 @@ import {
   buildMercadoPagoSinglePaymentUrl,
   DEFAULT_SINGLE_LICENSE_CONFIG,
   evaluateSubscriptionStatus,
+  hasValidCustomMercadoPagoLink,
   normalizeTenantLicenseConfig,
 } from '../utils/saasLogic';
 import {
@@ -776,14 +781,76 @@ export function SubscriptionMercadoPagoModal({
   onShowBanner,
 }: SubscriptionMercadoPagoModalProps) {
   const [referenceInput, setReferenceInput] = useState('');
-
-  if (!isOpen) return null;
+  const [copiedField, setCopiedField] = useState<'alias' | 'cbu' | 'mp' | null>(null);
+  const [showSellerConfig, setShowSellerConfig] = useState(false);
 
   const normalizedSub = normalizeTenantLicenseConfig(
     subscription as unknown as Partial<TenantSubscriptionConfig> &
       Record<string, unknown>
   );
+
+  const [sellerAliasDraft, setSellerAliasDraft] = useState(
+    normalizedSub.sellerAlias || DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias
+  );
+  const [sellerCbuDraft, setSellerCbuDraft] = useState(
+    normalizedSub.sellerCbu || DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu
+  );
+  const [sellerHolderDraft, setSellerHolderDraft] = useState(
+    normalizedSub.sellerHolder || DEFAULT_SINGLE_LICENSE_CONFIG.sellerHolder
+  );
+  const [sellerWhatsappDraft, setSellerWhatsappDraft] = useState(
+    normalizedSub.sellerWhatsapp || DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp
+  );
+  const [sellerPriceDraft, setSellerPriceDraft] = useState(
+    String(
+      normalizedSub.singleLicensePriceArs ||
+        DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs
+    )
+  );
+  const [customMpLinkDraft, setCustomMpLinkDraft] = useState(
+    hasValidCustomMercadoPagoLink(normalizedSub.mpCheckoutUrl)
+      ? normalizedSub.mpCheckoutUrl || ''
+      : ''
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      const sub = normalizeTenantLicenseConfig(
+        subscription as unknown as Partial<TenantSubscriptionConfig> &
+          Record<string, unknown>
+      );
+      setSellerAliasDraft(
+        sub.sellerAlias || DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias
+      );
+      setSellerCbuDraft(
+        sub.sellerCbu || DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu
+      );
+      setSellerHolderDraft(
+        sub.sellerHolder || DEFAULT_SINGLE_LICENSE_CONFIG.sellerHolder
+      );
+      setSellerWhatsappDraft(
+        sub.sellerWhatsapp || DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp
+      );
+      setSellerPriceDraft(
+        String(
+          sub.singleLicensePriceArs ||
+            DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs
+        )
+      );
+      setCustomMpLinkDraft(
+        hasValidCustomMercadoPagoLink(sub.mpCheckoutUrl)
+          ? sub.mpCheckoutUrl || ''
+          : ''
+      );
+    }
+  }, [isOpen, subscription]);
+
+  if (!isOpen) return null;
+
   const evalState = evaluateSubscriptionStatus(normalizedSub, activeDateStr);
+  const hasCustomMpLink = hasValidCustomMercadoPagoLink(
+    normalizedSub.mpCheckoutUrl
+  );
   const checkoutUrl = buildMercadoPagoSinglePaymentUrl(
     normalizedSub,
     userEmail
@@ -791,6 +858,68 @@ export function SubscriptionMercadoPagoModal({
   const licensePrice =
     normalizedSub.singleLicensePriceArs ||
     DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs;
+  const activeAlias =
+    normalizedSub.sellerAlias || DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias;
+  const activeCbu =
+    normalizedSub.sellerCbu || DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu;
+  const activeHolder =
+    normalizedSub.sellerHolder || DEFAULT_SINGLE_LICENSE_CONFIG.sellerHolder;
+  const activeWhatsapp =
+    normalizedSub.sellerWhatsapp || DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp;
+
+  const copyTextSafe = async (
+    text: string,
+    field: 'alias' | 'cbu' | 'mp'
+  ) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch {
+      // Fallback silent
+    }
+    setCopiedField(field);
+    setTimeout(() => {
+      setCopiedField((prev) => (prev === field ? null : prev));
+    }, 3500);
+  };
+
+  const handlePayWithMercadoPagoAction = async () => {
+    await copyTextSafe(activeAlias, 'mp');
+    onShowBanner(
+      `Alias "${activeAlias}" copiado al portapapeles. Pegalo en la opción "Transferir" de tu app Mercado Pago.`
+    );
+  };
+
+  const handleSaveSellerPaymentSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPrice = Math.max(
+      1000,
+      Number(sellerPriceDraft) || DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs
+    );
+    const cleanMpUrl = customMpLinkDraft.trim();
+    const updated: TenantSubscriptionConfig = {
+      ...normalizedSub,
+      sellerAlias:
+        sellerAliasDraft.trim() || DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias,
+      sellerCbu:
+        sellerCbuDraft.trim() || DEFAULT_SINGLE_LICENSE_CONFIG.sellerCbu,
+      sellerHolder:
+        sellerHolderDraft.trim() || DEFAULT_SINGLE_LICENSE_CONFIG.sellerHolder,
+      sellerWhatsapp:
+        sellerWhatsappDraft.trim() ||
+        DEFAULT_SINGLE_LICENSE_CONFIG.sellerWhatsapp,
+      singleLicensePriceArs: cleanPrice,
+      mpCheckoutUrl: hasValidCustomMercadoPagoLink(cleanMpUrl)
+        ? cleanMpUrl
+        : '',
+    };
+    onUpdateSubscription(updated);
+    setShowSellerConfig(false);
+    onShowBanner(
+      'Datos de cobro de licencia (Alias, CVU y enlace de Mercado Pago) actualizados correctamente.'
+    );
+  };
 
   const handleConfirmPaymentOrLicense = (e: React.FormEvent) => {
     e.preventDefault();
@@ -814,56 +943,61 @@ export function SubscriptionMercadoPagoModal({
     );
   };
 
+  const whatsappProofUrl = buildSafeWhatsAppUrl(
+    activeWhatsapp,
+    `Hola, realicé el pago único de la Licencia PastoPro ($${licensePrice.toLocaleString('es-AR')} ARS) al alias ${activeAlias}.\n\n• Emprendimiento: ${businessName}\n• Cuenta: ${userEmail || 'Local'}\n• N° Comprobante: ${referenceInput.trim() || 'Adjunto comprobante'}`
+  );
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="subscription-modal-title"
     >
-      <div className="bg-white border border-zinc-200 rounded-2xl max-w-xl w-full max-h-[92vh] overflow-y-auto p-6 sm:p-7 shadow-xl my-6 space-y-5">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 pb-4">
-          <div className="space-y-1">
+      <div className="bg-white border border-zinc-200 rounded-2xl max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-7 shadow-xl my-4 space-y-5 break-words">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 pb-4">
+          <div className="space-y-1 min-w-0 flex-1">
             <div className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-emerald-700 font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5" />
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
               <span>LICENCIA DE USO COMERCIAL · PAGO ÚNICO</span>
             </div>
             <h2
               id="subscription-modal-title"
-              className="font-display text-xl font-bold text-zinc-950"
+              className="font-display text-lg sm:text-xl font-bold text-zinc-950 break-words"
             >
               Activación Definitiva — {businessName}
             </h2>
-            <p className="text-xs text-zinc-500">
-              Adquiere tu licencia de uso mediante un único pago con Mercado
-              Pago, sin abonos mensuales ni renovaciones automáticas.
+            <p className="text-xs text-zinc-500 leading-relaxed">
+              Adquirí tu licencia de uso mediante un único pago por Mercado Pago
+              (Transferencia por Alias/CVU o Link de Pago), sin abonos mensuales.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Cerrar ventana de licencia"
-            className="min-h-[38px] min-w-[38px] flex items-center justify-center text-zinc-400 hover:text-zinc-900 rounded-lg"
+            className="min-h-[38px] min-w-[38px] flex items-center justify-center text-zinc-400 hover:text-zinc-900 rounded-lg shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Estado actual de la licencia */}
-        <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-0.5">
-            <div className="text-xs text-zinc-500 font-medium">
+        <div className="p-3.5 sm:p-4 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5 min-w-0">
+            <div className="text-xs text-zinc-500 font-medium break-all">
               Estado de Licencia ({userEmail || 'Espacio de Trabajo'}):
             </div>
-            <div className="text-base font-bold text-zinc-950 flex items-center gap-2">
+            <div className="text-sm sm:text-base font-bold text-zinc-950 flex flex-wrap items-center gap-2">
               <span>{evalState.planName}</span>
               <span
                 className={`text-[11px] font-mono px-2.5 py-0.5 rounded-md font-semibold ${
                   evalState.isProActive
                     ? 'bg-emerald-100 text-emerald-800'
                     : evalState.status === 'expired'
-                    ? 'bg-red-100 text-red-800'
-                    : 'bg-amber-100 text-amber-900'
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-amber-100 text-amber-900'
                 }`}
               >
                 {evalState.badgeText}
@@ -871,24 +1005,24 @@ export function SubscriptionMercadoPagoModal({
             </div>
           </div>
           {normalizedSub.licenseKey && (
-            <div className="text-xs font-mono text-zinc-600 bg-white px-2.5 py-1 rounded-lg border border-zinc-200">
+            <div className="text-xs font-mono text-zinc-600 bg-white px-2.5 py-1 rounded-lg border border-zinc-200 break-all">
               Clave: <span className="font-bold">{normalizedSub.licenseKey}</span>
             </div>
           )}
         </div>
 
-        {/* Tarjeta Única de Licencia de Pago Único */}
-        <div className="p-5 rounded-2xl border-2 border-zinc-950 bg-zinc-950 text-white space-y-4">
+        {/* Tarjeta Única de Licencia de Pago Único + Datos de Mercado Pago */}
+        <div className="p-4 sm:p-5 rounded-2xl border-2 border-zinc-950 bg-zinc-950 text-white space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3.5">
-            <div>
-              <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-semibold">
+            <div className="min-w-0">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-semibold block">
                 SIN CARGOS RECURRENTES NI SUSCRIPCIONES
               </span>
-              <h3 className="text-lg font-bold mt-0.5">
+              <h3 className="text-base sm:text-lg font-bold mt-0.5">
                 Licencia Comercial Completa (Pago Único)
               </h3>
             </div>
-            <div className="text-left sm:text-right">
+            <div className="text-left sm:text-right shrink-0">
               <div className="text-2xl font-bold font-mono tabular-nums text-white">
                 ${licensePrice.toLocaleString('es-AR')}
               </div>
@@ -898,39 +1032,217 @@ export function SubscriptionMercadoPagoModal({
             </div>
           </div>
 
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-zinc-300">
-            <li className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Clientes, lotes y rutas GPS ilimitados</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Marca propia (logo, tarifas $/m² y alias)</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Recibos imprimibles y avisos por WhatsApp</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Respaldo privado y aislado en la nube</span>
-            </li>
-          </ul>
-
-          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs text-zinc-300">
-              Abona por única vez mediante Checkout Pro de Mercado Pago.
+          {/* Datos Oficiales de Transferencia Mercado Pago (Alias y CVU) */}
+          <div
+            data-testid="mercadopago-transfer-box"
+            className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3"
+          >
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[#009EE3] font-bold">
+                DATOS OFICIALES MERCADO PAGO / TRANSFERENCIA
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSellerConfig((prev) => !prev)}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-300 hover:text-white underline cursor-pointer"
+              >
+                <Settings className="w-3 h-3" />
+                <span>
+                  {showSellerConfig
+                    ? 'Ocultar configuración de cobro'
+                    : 'Configurar mi Alias / Link MP'}
+                </span>
+              </button>
             </div>
+
+            <div className="grid grid-cols-1 gap-2.5 text-xs">
+              <div className="p-3 rounded-lg bg-zinc-950/90 border border-zinc-800 flex items-center justify-between gap-3 min-w-0">
+                <div className="min-w-0">
+                  <span className="text-[10px] text-zinc-400 uppercase font-mono block">
+                    Alias Mercado Pago
+                  </span>
+                  <span
+                    data-testid="mp-license-alias-value"
+                    className="font-mono font-bold text-sm text-emerald-300 break-all"
+                  >
+                    {activeAlias}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="copy-mp-alias-btn"
+                  onClick={() => copyTextSafe(activeAlias, 'alias')}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedField === 'alias' ? '✓ Copiado' : 'Copiar Alias'}</span>
+                </button>
+              </div>
+
+              <div className="p-3 rounded-lg bg-zinc-950/90 border border-zinc-800 flex items-center justify-between gap-3 min-w-0">
+                <div className="min-w-0">
+                  <span className="text-[10px] text-zinc-400 uppercase font-mono block">
+                    CVU / CBU (Transferencia Bancaria o Billetera)
+                  </span>
+                  <span className="font-mono font-bold text-zinc-200 break-all text-xs sm:text-sm">
+                    {activeCbu}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyTextSafe(activeCbu, 'cbu')}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedField === 'cbu' ? '✓ Copiado' : 'Copiar CVU'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-zinc-400 flex flex-wrap items-center justify-between gap-1">
+              <span>
+                Titular: <strong className="text-zinc-200">{activeHolder}</strong>
+              </span>
+              <span>Acreditación inmediata</span>
+            </div>
+
+            {copiedField === 'mp' && (
+              <div
+                role="status"
+                data-testid="mp-copied-confirmation"
+                className="p-2.5 rounded-lg bg-emerald-950/90 border border-emerald-700 text-emerald-200 text-xs leading-relaxed"
+              >
+                ✓ <strong>Alias "{activeAlias}" copiado al portapapeles.</strong>{' '}
+                Abrí tu app de Mercado Pago o billetera, elegí{' '}
+                <strong>"Transferir"</strong>, pegá el alias y aboná{' '}
+                <strong>${licensePrice.toLocaleString('es-AR')}</strong>.
+              </div>
+            )}
+          </div>
+
+          {/* Formulario opcional para que el Admin / Vendedor configure su propio Alias o Link mpago.la */}
+          {showSellerConfig && (
+            <div className="p-3.5 rounded-xl bg-zinc-900 border border-emerald-500/40 space-y-3 text-xs">
+              <div className="font-bold text-emerald-300">
+                Personalizar Datos de Cobro de la Licencia (Vendedor / Admin)
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Si en Mercado Pago te apareció "algo salió mal", era porque el
+                link de ejemplo no correspondía a una cuenta real. Acá podés
+                poner tu propio Alias, CVU y (opcionalmente) un Link de Pago real
+                generado desde tu app de Mercado Pago ("Cobrar con Link de Pago").
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] text-zinc-300 mb-1">
+                    Alias de Mercado Pago
+                  </label>
+                  <input
+                    type="text"
+                    value={sellerAliasDraft}
+                    onChange={(e) => setSellerAliasDraft(e.target.value)}
+                    placeholder="mi.alias.mp"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-white font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-300 mb-1">
+                    CVU / CBU (22 dígitos)
+                  </label>
+                  <input
+                    type="text"
+                    value={sellerCbuDraft}
+                    onChange={(e) => setSellerCbuDraft(e.target.value)}
+                    placeholder="00000031000..."
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-white font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-300 mb-1">
+                    Nombre del Titular
+                  </label>
+                  <input
+                    type="text"
+                    value={sellerHolderDraft}
+                    onChange={(e) => setSellerHolderDraft(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-300 mb-1">
+                    Valor Licencia Pago Único ($ ARS)
+                  </label>
+                  <input
+                    type="number"
+                    min={1000}
+                    step={500}
+                    value={sellerPriceDraft}
+                    onChange={(e) => setSellerPriceDraft(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-white font-mono text-xs"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] text-zinc-300 mb-1">
+                    Link de Pago Mercado Pago (Opcional — ej. https://mpago.la/...)
+                  </label>
+                  <input
+                    type="url"
+                    value={customMpLinkDraft}
+                    onChange={(e) => setCustomMpLinkDraft(e.target.value)}
+                    placeholder="Dejar vacío para cobrar por Alias/CVU sin errores"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-white font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleSaveSellerPaymentSettings}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer"
+                >
+                  Guardar Datos de Cobro
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="pt-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {hasCustomMpLink ? (
+              <a
+                href={checkoutUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="mercadopago-checkout-link"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-[#009EE3] hover:bg-[#0089C7] rounded-xl transition-colors text-center break-words"
+              >
+                <CreditCard className="w-4 h-4 shrink-0" />
+                <span>Abrir Link de Pago Mercado Pago</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePayWithMercadoPagoAction}
+                data-testid="mercadopago-checkout-link"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-[#009EE3] hover:bg-[#0089C7] rounded-xl transition-colors text-center cursor-pointer break-words"
+              >
+                <CreditCard className="w-4 h-4 shrink-0" />
+                <span>
+                  {copiedField === 'mp'
+                    ? '✓ Alias Copiado · Listo para Transferir'
+                    : 'Pagar con Mercado Pago (Copiar Alias)'}
+                </span>
+              </button>
+            )}
+
             <a
-              href={checkoutUrl}
+              href={whatsappProofUrl}
               target="_blank"
               rel="noopener noreferrer"
-              data-testid="mercadopago-checkout-link"
-              className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#009EE3] hover:bg-[#0089C7] rounded-xl transition-colors whitespace-nowrap shrink-0"
+              className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors text-center break-words"
             >
-              <CreditCard className="w-4 h-4" />
-              <span>Comprar Licencia con Mercado Pago</span>
-              <ExternalLink className="w-3.5 h-3.5" />
+              <MessageCircle className="w-4 h-4 shrink-0" />
+              <span>Enviar Comprobante por WhatsApp</span>
             </a>
           </div>
         </div>
@@ -939,10 +1251,10 @@ export function SubscriptionMercadoPagoModal({
         <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3">
           <div>
             <div className="text-xs font-bold text-zinc-950">
-              ¿Ya realizaste el pago único o tienes una Clave de Licencia?
+              ¿Ya transferiste al Alias o tenés una Clave de Licencia?
             </div>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              Ingresa el número de operación de Mercado Pago o tu código de
+            <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+              Ingresá el número de comprobante de Mercado Pago o tu código de
               activación para habilitar la licencia permanente en tu cuenta.
             </p>
           </div>
@@ -956,14 +1268,14 @@ export function SubscriptionMercadoPagoModal({
               value={referenceInput}
               onChange={(e) => setReferenceInput(e.target.value)}
               placeholder="Ej: MP-849201 o LIC-PASTOPRO-2026"
-              className="flex-1 px-3 py-2 text-xs font-mono bg-white border border-zinc-200 rounded-xl"
+              className="flex-1 min-w-0 px-3 py-2 text-xs font-mono bg-white border border-zinc-200 rounded-xl"
             />
             <button
               type="submit"
               data-testid="activate-subscription-btn"
-              className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors whitespace-nowrap"
+              className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors text-center break-words cursor-pointer"
             >
-              <ShieldCheck className="w-4 h-4" />
+              <ShieldCheck className="w-4 h-4 shrink-0" />
               <span>Activar Licencia Definitiva</span>
             </button>
           </form>
@@ -980,17 +1292,17 @@ export function SubscriptionMercadoPagoModal({
                 {normalizedSub.paymentHistory.map((item) => (
                   <div
                     key={item.id}
-                    className="px-3.5 py-2.5 flex items-center justify-between text-xs bg-white"
+                    className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs bg-white"
                   >
-                    <div>
-                      <div className="font-semibold text-zinc-900">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-zinc-900 break-words">
                         {item.planLabel}
                       </div>
-                      <div className="text-[11px] font-mono text-zinc-500">
+                      <div className="text-[11px] font-mono text-zinc-500 break-all">
                         {item.date} · {item.method} · Ref: {item.referenceCode}
                       </div>
                     </div>
-                    <div className="text-right font-mono font-bold text-emerald-700 tabular-nums">
+                    <div className="text-right font-mono font-bold text-emerald-700 tabular-nums shrink-0">
                       ${item.amountArs.toLocaleString('es-AR')}
                     </div>
                   </div>

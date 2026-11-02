@@ -14,8 +14,10 @@ import {
   enqueueOfflineAction,
   filterRecordsByPeriod,
   flushOfflineActionQueue,
+  formatStopwatchSeconds,
   generateGoogleSheetsTsv,
   getArgentinaCitySuggestions,
+  getClientCutTimeHistory,
   getClientPriceHistory,
   getStreetAddressSuggestions,
   getTodayIsoLocal,
@@ -36,7 +38,9 @@ import {
 import {
   createBlankTenantWorkspace,
   getInitialAccessApprovalState,
+  hasValidCustomMercadoPagoLink,
   isPrimaryAdminEmail,
+  normalizeTenantLicenseConfig,
   PENDING_APPROVAL_BLOCK_MESSAGE,
   PRIMARY_ADMIN_EMAIL,
 } from './saasLogic';
@@ -550,3 +554,59 @@ test('sanitizeText, buildSafeWhatsAppUrl, and sanitizeAndValidateBackupPayload e
   assert.equal(sanitized?.invoices?.[0].amount, 500);
   assert.equal(sanitized?.invoices?.[0].photoUrl, undefined);
 });
+
+test('formatStopwatchSeconds and getClientCutTimeHistory compute real mowing durations, averages, and hourly productivity', () => {
+  assert.equal(formatStopwatchSeconds(0), '00:00');
+  assert.equal(formatStopwatchSeconds(95), '01:35');
+  assert.equal(formatStopwatchSeconds(3665), '01:01:05');
+
+  const pendingJob = INITIAL_TODAY_JOBS[2];
+  const { updatedJob, invoice } = completeJobAndCreateInvoice(
+    pendingJob,
+    true,
+    'Transferencia',
+    '2026-11-01',
+    25,
+    undefined,
+    42
+  );
+  assert.equal(updatedJob.actualDurationMinutes, 42);
+  assert.equal(invoice.actualDurationMinutes, 42);
+
+  const summary = getClientCutTimeHistory(
+    pendingJob.propertyId,
+    pendingJob.clientName,
+    [invoice, ...INITIAL_INVOICES],
+    [updatedJob, ...INITIAL_TODAY_JOBS],
+    pendingJob.estimatedMinutes,
+    pendingJob.areaSqm
+  );
+  assert.ok(summary.totalTimedCuts >= 1);
+  assert.equal(summary.lastDurationMinutes, 42);
+  assert.ok(summary.averageMinutes !== null && summary.averageMinutes > 0);
+  assert.ok(summary.avgSqmPerHour !== null && summary.avgSqmPerHour > 0);
+  assert.ok(summary.avgRevenuePerHour !== null && summary.avgRevenuePerHour > 0);
+});
+
+test('hasValidCustomMercadoPagoLink and normalizeTenantLicenseConfig prevent broken placeholder mpago.la links', () => {
+  assert.equal(
+    hasValidCustomMercadoPagoLink('https://mpago.la/2xPastoProLicenciaUnica'),
+    false
+  );
+  assert.equal(
+    hasValidCustomMercadoPagoLink('https://www.mercadopago.com.ar/home'),
+    false
+  );
+  assert.equal(
+    hasValidCustomMercadoPagoLink('https://mpago.la/1a2b3cRealLink'),
+    true
+  );
+
+  const normalized = normalizeTenantLicenseConfig({
+    mpCheckoutUrl: 'https://mpago.la/2xPastoProLicenciaUnica',
+  });
+  assert.equal(normalized.mpCheckoutUrl, '');
+  assert.equal(normalized.sellerAlias, 'pastopro.licencia.mp');
+  assert.equal(normalized.sellerCbu, '0000003100084920114502');
+});
+

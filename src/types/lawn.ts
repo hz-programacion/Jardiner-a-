@@ -68,6 +68,7 @@ export interface ScheduledJob {
   accessNotes: string;
   coordinates: LatLng;
   estimatedMinutes: number;
+  actualDurationMinutes?: number;
   startedAt?: string;
   completedAt?: string;
   invoiceId?: string;
@@ -107,6 +108,35 @@ export interface InvoiceRecord {
   paidAt?: string;
   nextScheduledDate: string;
   photoUrl?: string;
+  actualDurationMinutes?: number;
+}
+
+export interface CutTimeRecord {
+  id: string;
+  propertyId: string;
+  jobId?: string;
+  invoiceId?: string;
+  clientName: string;
+  address: string;
+  areaSqm: number;
+  date: string; // YYYY-MM-DD
+  durationMinutes: number;
+  estimatedMinutes: number;
+  amountCharged: number;
+  notes?: string;
+}
+
+export interface ClientCutTimeSummary {
+  records: CutTimeRecord[];
+  totalTimedCuts: number;
+  averageMinutes: number;
+  lastDurationMinutes: number | null;
+  fastestMinutes: number | null;
+  slowestMinutes: number | null;
+  estimatedMinutes: number;
+  varianceFromEstimateMinutes: number;
+  avgSqmPerHour: number;
+  avgRevenuePerHour: number;
 }
 
 export interface PaymentProfileConfig {
@@ -157,6 +187,10 @@ export interface TenantSubscriptionConfig {
   activatedAt?: string;
   mpCheckoutUrl?: string;
   sellerWhatsapp?: string;
+  sellerAlias?: string;
+  sellerCbu?: string;
+  sellerHolder?: string;
+  sellerBank?: string;
   singleLicensePriceArs: number;
   licenseKey?: string;
   paymentHistory: SubscriptionPaymentRecord[];
