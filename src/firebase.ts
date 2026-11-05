@@ -190,6 +190,8 @@ const DEFAULT_SAMPLE_TENANTS: RegisteredTenantSummary[] = [
     displayName: 'Diego Hernández',
     businessName: 'PastoPro Venado Tuerto',
     city: 'Venado Tuerto, Santa Fe',
+    phone: '+54 9 3462 55-1234',
+    requestMessage: 'Cuenta maestra del Administrador de Plataforma.',
     registeredAt: getTodayIsoLocal(),
     updatedAt: getTodayIsoLocal(),
     isApproved: true,
@@ -204,6 +206,26 @@ const DEFAULT_SAMPLE_TENANTS: RegisteredTenantSummary[] = [
     displayName: 'Martín Gómez',
     businessName: 'Parques del Sur Rosario',
     city: 'Rosario, Santa Fe',
+    phone: '+54 9 341 588-4210',
+    requestMessage:
+      'Hola Diego! Me registré para usar PastoPro con mi cuadrilla en Funes y Roldán (28 clientes). Quiero abonar la licencia de pago único.',
+    registeredAt: getTodayIsoLocal(),
+    updatedAt: getTodayIsoLocal(),
+    isApproved: false,
+    approvalStatus: 'pending',
+    role: 'user',
+    licenseStatus: 'trialing',
+    planId: 'evaluation',
+  },
+  {
+    uid: 'tenant-pilar-03',
+    email: 'federico.quintas.pilar@gmail.com',
+    displayName: 'Federico Alarcón',
+    businessName: 'Mantenimiento Norte Quintas',
+    city: 'Pilar, Buenos Aires',
+    phone: '+54 9 11 6420-9188',
+    requestMessage:
+      'Solicito permiso de acceso. Ya realicé la transferencia al alias de Mercado Pago para habilitar mi cuenta.',
     registeredAt: getTodayIsoLocal(),
     updatedAt: getTodayIsoLocal(),
     isApproved: false,
@@ -218,6 +240,9 @@ const DEFAULT_SAMPLE_TENANTS: RegisteredTenantSummary[] = [
     displayName: 'Lucas Ferreyra',
     businessName: 'Verdes Sierras Córdoba',
     city: 'Córdoba Capital, Córdoba',
+    phone: '+54 9 351 712-3390',
+    requestMessage:
+      'Licencia de pago único abonada y validada por transferencia.',
     registeredAt: getTodayIsoLocal(),
     updatedAt: getTodayIsoLocal(),
     isApproved: true,
@@ -243,7 +268,21 @@ export function getLocalTenantDirectory(): RegisteredTenantSummary[] {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return DEFAULT_SAMPLE_TENANTS;
     }
-    return parsed;
+    const byUid = new Map<string, RegisteredTenantSummary>();
+    for (const def of DEFAULT_SAMPLE_TENANTS) {
+      byUid.set(def.uid, def);
+    }
+    for (const item of parsed as RegisteredTenantSummary[]) {
+      if (!item || !item.uid) continue;
+      const fallback = byUid.get(item.uid);
+      byUid.set(item.uid, {
+        ...fallback,
+        ...item,
+        phone: item.phone || fallback?.phone || '',
+        requestMessage: item.requestMessage || fallback?.requestMessage || '',
+      });
+    }
+    return Array.from(byUid.values());
   } catch {
     return DEFAULT_SAMPLE_TENANTS;
   }
@@ -467,8 +506,62 @@ export function subscribeToWorkspaceFirestore(
 }
 
 /**
+ * Explicitly records an access/license activation request in Cloud Firestore
+ * under `access_requests/{uid}` so users registering from Colombia, Argentina, or anywhere
+ * are immediately and permanently visible to the administrator across all devices.
+ */
+export async function recordCloudAccessRequest(request: {
+  uid: string;
+  email: string;
+  displayName?: string;
+  businessName?: string;
+  city?: string;
+  country?: string;
+  phone?: string;
+  isApproved?: boolean;
+  approvalStatus?: ApprovalStatus;
+}): Promise<boolean> {
+  if (!firestoreInstance) return false;
+  try {
+    const docRef = doc(firestoreInstance, 'access_requests', request.uid);
+    const cleanEmail = (request.email || '').trim().toLowerCase();
+    const isAdminAcc = isPrimaryAdminEmail(cleanEmail);
+    const isApproved = isAdminAcc ? true : Boolean(request.isApproved);
+    const approvalStatus: ApprovalStatus = isAdminAcc
+      ? 'approved'
+      : request.approvalStatus || (isApproved ? 'approved' : 'pending');
+
+    await setDoc(
+      docRef,
+      {
+        uid: request.uid,
+        email: cleanEmail,
+        displayName: request.displayName || cleanEmail.split('@')[0],
+        businessName: request.businessName || 'Empresa de Jardinería',
+        city: request.city || 'Internacional',
+        country:
+          request.country ||
+          (request.city?.toLowerCase().includes('colombia') ? 'Colombia' : 'Argentina'),
+        phone: request.phone || '',
+        isApproved,
+        approvalStatus,
+        role: isAdminAcc ? 'admin' : 'user',
+        registeredAt: getTodayIsoLocal(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `access_requests/${request.uid}`);
+    return false;
+  }
+}
+
+/**
  * Exclusive Administrator query: lists all registered user accounts from Cloud Firestore
- * and merges with local registry so the primary admin sees every account and its status.
+ * (both `workspaces` and `access_requests` collections) and merges with local registry
+ * so the primary admin sees every account, their country, and their license status in real time.
  */
 export async function listAllWorkspacesForAdmin(): Promise<
   RegisteredTenantSummary[]
@@ -480,6 +573,7 @@ export async function listAllWorkspacesForAdmin(): Promise<
   }
 
   if (firestoreInstance) {
+    // 1. Query all documents in `workspaces`
     try {
       const snap = await getDocs(collection(firestoreInstance, 'workspaces'));
       snap.forEach((docSnap) => {
@@ -492,12 +586,16 @@ export async function listAllWorkspacesForAdmin(): Promise<
           ? 'approved'
           : d.approvalStatus || (isApproved ? 'approved' : 'pending');
 
+        const existingLocal = mergedMap.get(uid);
         const summary: RegisteredTenantSummary = {
           uid,
           email,
-          displayName: d.businessProfile?.ownerName || email.split('@')[0],
-          businessName: d.businessProfile?.appName || 'Servicio de Jardinería',
-          city: d.baseLocation?.city || 'Argentina',
+          displayName: d.businessProfile?.ownerName || existingLocal?.displayName || email.split('@')[0],
+          businessName: d.businessProfile?.appName || existingLocal?.businessName || 'Servicio de Jardinería',
+          city: d.baseLocation?.city || existingLocal?.city || 'Argentina',
+          phone: d.businessProfile?.ownerPhone || existingLocal?.phone || '',
+          requestMessage: existingLocal?.requestMessage,
+          adminNotes: existingLocal?.adminNotes,
           registeredAt: (d.registeredAt || d.updatedAtIso || getTodayIsoLocal()).slice(0, 10),
           updatedAt: (d.updatedAtIso || getTodayIsoLocal()).slice(0, 10),
           isApproved,
@@ -511,11 +609,87 @@ export async function listAllWorkspacesForAdmin(): Promise<
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'workspaces');
     }
+
+    // 2. Query all registration and access requests from `access_requests`
+    try {
+      const reqSnap = await getDocs(
+        collection(firestoreInstance, 'access_requests')
+      );
+      reqSnap.forEach((docSnap) => {
+        const reqData = docSnap.data();
+        const uid = docSnap.id || reqData.uid;
+        if (!uid) return;
+        const email = reqData.email || `${uid}@pastopro.app`;
+        const isAdminAcc = isPrimaryAdminEmail(email);
+        const isApproved = isAdminAcc ? true : Boolean(reqData.isApproved);
+        const approvalStatus: ApprovalStatus = isAdminAcc
+          ? 'approved'
+          : reqData.approvalStatus || (isApproved ? 'approved' : 'pending');
+
+        const existing = mergedMap.get(uid);
+        const summary: RegisteredTenantSummary = {
+          uid,
+          email,
+          displayName:
+            reqData.displayName ||
+            existing?.displayName ||
+            email.split('@')[0],
+          businessName:
+            reqData.businessName ||
+            existing?.businessName ||
+            'Empresa de Jardinería',
+          city:
+            reqData.city ||
+            existing?.city ||
+            (reqData.country ? `${reqData.country}` : 'Internacional'),
+          phone: reqData.phone || existing?.phone || '',
+          requestMessage: reqData.requestMessage || existing?.requestMessage,
+          adminNotes: reqData.adminNotes || existing?.adminNotes,
+          registeredAt: (
+            reqData.registeredAt ||
+            existing?.registeredAt ||
+            getTodayIsoLocal()
+          ).slice(0, 10),
+          updatedAt: (
+            reqData.updatedAtIso ||
+            existing?.updatedAt ||
+            getTodayIsoLocal()
+          ).slice(0, 10),
+          isApproved,
+          approvalStatus,
+          role: isAdminAcc ? 'admin' : 'user',
+          licenseStatus: isApproved ? 'active' : 'trialing',
+          planId: isApproved ? 'single_payment_license' : 'evaluation',
+        };
+        mergedMap.set(uid, summary);
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'access_requests');
+    }
   }
 
-  const all = Array.from(mergedMap.values()).sort((a, b) => {
-    if (a.role === 'admin' && b.role !== 'admin') return -1;
-    if (b.role === 'admin' && a.role !== 'admin') return 1;
+  // Deduplicate by normalized email so duplicate Firestore/local records for the same email never clutter the panel
+  const byEmail = new Map<string, RegisteredTenantSummary>();
+  for (const item of mergedMap.values()) {
+    const emailKey = (item.email || item.uid).trim().toLowerCase();
+    const existing = byEmail.get(emailKey);
+    if (!existing) {
+      byEmail.set(emailKey, item);
+    } else {
+      byEmail.set(emailKey, {
+        ...existing,
+        ...item,
+        phone: item.phone || existing.phone || '',
+        requestMessage: item.requestMessage || existing.requestMessage || '',
+        adminNotes: item.adminNotes || existing.adminNotes || '',
+      });
+    }
+  }
+
+  // Sort Pending Requests FIRST so the Administrator immediately sees users asking for permission
+  const all = Array.from(byEmail.values()).sort((a, b) => {
+    if (a.role === 'admin' && b.role !== 'admin') return 1;
+    if (b.role === 'admin' && a.role !== 'admin') return -1;
     if (a.approvalStatus === 'pending' && b.approvalStatus !== 'pending') return -1;
     if (b.approvalStatus === 'pending' && a.approvalStatus !== 'pending') return 1;
     return (b.registeredAt || '').localeCompare(a.registeredAt || '');
@@ -622,6 +796,16 @@ export async function updateUserApprovalByAdmin(
           isApproved: approve,
           approvalStatus: newStatus,
           updatedAtIso: new Date().toISOString(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      // Also update access_requests collection
+      await setDoc(
+        doc(firestoreInstance, 'access_requests', targetUid),
+        {
+          isApproved: approve,
+          approvalStatus: newStatus,
           updatedAt: serverTimestamp(),
         },
         { merge: true }

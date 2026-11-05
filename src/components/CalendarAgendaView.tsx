@@ -195,55 +195,38 @@ export function CalendarAgendaView({
   }, [selectedDate]);
 
   return (
-    <div className="space-y-5">
-      {/* Top Calendar Control Bar */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xs">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <CalendarIcon className="w-3.5 h-3.5 text-emerald-700" />
-            <span>Agenda Operativa y Ventana de Corte</span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono font-semibold text-emerald-800">
-              {MONTH_NAMES[selectedDateParts.monthIndex]} {selectedDateParts.year}
+    <div className="space-y-4">
+      {/* Clean Calendar Header Bar */}
+      <div className="bg-white text-slate-900 border border-slate-200 rounded-2xl p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 shadow-2xs">
+        <div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span className="font-semibold text-emerald-600 uppercase tracking-wider font-mono text-[10px]">
+              Agenda Operativa
             </span>
-            <span aria-hidden="true">·</span>
-            <span
-              className={`inline-flex items-center gap-1 font-mono font-semibold ${
-                selectedDayWeather.isRainRisk
-                  ? 'text-sky-700'
-                  : 'text-amber-700'
-              }`}
-            >
+            <span>·</span>
+            <span className="inline-flex items-center gap-1 font-medium text-slate-600">
               {selectedDayWeather.condition === 'Alerta Lluvia' ? (
                 <CloudRain className="w-3.5 h-3.5 text-sky-600" />
               ) : selectedDayWeather.condition === 'Parcialmente Nublado' ? (
-                <CloudSun className="w-3.5 h-3.5 text-amber-600" />
+                <CloudSun className="w-3.5 h-3.5 text-amber-500" />
               ) : (
                 <Sun className="w-3.5 h-3.5 text-amber-500" />
               )}
-              <span>
-                {selectedDayWeather.condition} {selectedDayWeather.tempMax}°C (
-                {selectedDayWeather.rainProb}% lluvia) —{' '}
-                {selectedDayWeather.cuttingWindowLabel}
-              </span>
+              <span>{selectedDayWeather.tempMax}°C</span>
             </span>
           </div>
-          <h2 className="text-lg sm:text-xl font-bold text-slate-900 capitalize">
+          <h2 className="font-display text-lg sm:text-xl font-bold text-slate-900 capitalize mt-0.5">
             {formattedDateHeader}
           </h2>
-          <p className="text-xs text-slate-600 tabular-nums">
-            {dayJobs.length} trabajos en esta fecha
-            <span aria-hidden="true"> · </span>
-            Facturación prevista:{' '}
-            <span className="font-mono font-bold text-emerald-800">
+          <p className="text-xs text-slate-500 tabular-nums mt-0.5">
+            {dayJobs.length} visitas en el día · Facturación estimada:{' '}
+            <span className="font-mono font-bold text-emerald-600">
               ${daySummary.totalRevenue.toLocaleString('es-AR')}
             </span>
-            <span aria-hidden="true"> · </span>
-            Carga estimada: ~{Math.round((daySummary.totalMinutes / 60) * 10) / 10} hs
           </p>
         </div>
 
-        <div className="flex flex-wrap xl:flex-nowrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {/* Segmented View Switcher: Día | Semana | Mes */}
           <div
             role="group"
@@ -261,9 +244,9 @@ export function CalendarAgendaView({
                 key={mode.id}
                 type="button"
                 onClick={() => setViewMode(mode.id)}
-                className={`min-h-[34px] px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                className={`min-h-[30px] px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   viewMode === mode.id
-                    ? 'bg-white text-slate-900 shadow-xs'
+                    ? 'bg-slate-900 text-white shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -273,60 +256,39 @@ export function CalendarAgendaView({
           </div>
 
           {/* Date Navigation Controls */}
-          <div className="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <div className="inline-flex items-center gap-0.5 bg-white p-0.5 rounded-xl border border-slate-200 shadow-2xs">
             <button
               type="button"
               onClick={() => shiftByMode(-1)}
               aria-label="Período anterior"
-              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-700 hover:bg-white transition-colors"
+              className="min-h-[32px] min-w-[30px] flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               type="button"
               onClick={() => onSelectDate(todayStr)}
-              className="min-h-[34px] px-2.5 py-1 text-xs font-semibold text-slate-800 hover:bg-white rounded-lg transition-colors whitespace-nowrap"
+              className="min-h-[32px] px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
-              Hoy ({todayStr.slice(5)})
+              Hoy
             </button>
             <button
               type="button"
               onClick={() => shiftByMode(1)}
               aria-label="Período siguiente"
-              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-700 hover:bg-white transition-colors"
+              className="min-h-[32px] min-w-[30px] flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
-          {selectedDayWeather.isRainRisk && onRainDelayDate && dayJobs.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onRainDelayDate(selectedDate)}
-              className="min-h-[40px] inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-900 bg-sky-100 border border-sky-300 rounded-xl hover:bg-sky-200 transition-colors whitespace-nowrap shrink-0"
-            >
-              <CloudRain className="w-3.5 h-3.5 text-sky-700" />
-              <span>Posponer Día por Lluvia (+1d)</span>
-            </button>
-          )}
-
-          {/* Primary Actions for Selected Date */}
           <button
             type="button"
             onClick={() => onOpenScheduleModal(selectedDate, '08:00')}
-            className="min-h-[40px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 rounded-xl hover:bg-emerald-800 transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Programar Corte</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onOpenRouteForDate(selectedDate)}
-            className="min-h-[40px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-          >
-            <Compass className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Ruta GPS del Día</span>
+            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Programar Visita</span>
           </button>
         </div>
       </div>
@@ -335,18 +297,18 @@ export function CalendarAgendaView({
       {viewMode === 'dia' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Left: Hourly Schedule Grid */}
-          <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-2xl overflow-hidden">
+          <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
             <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
-              <div className="text-xs font-bold text-slate-800">
+              <div className="text-xs font-bold text-slate-900">
                 Cronograma por Hora ({selectedDate})
               </div>
               <button
                 type="button"
                 onClick={() => onOpenNewClientForDate(selectedDate, '09:00')}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 hover:underline whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 hover:underline whitespace-nowrap cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>+ Cliente Nuevo en esta Fecha</span>
+                <span>+ Cliente Nuevo</span>
               </button>
             </div>
 
@@ -360,35 +322,26 @@ export function CalendarAgendaView({
                 return (
                   <div
                     key={hourSlot}
-                    className="grid grid-cols-12 min-h-[64px] hover:bg-slate-50/50 transition-colors"
+                    className="grid grid-cols-12 min-h-[58px] hover:bg-slate-50/50 transition-colors"
                   >
-                    <div className="col-span-2 sm:col-span-2 py-3 px-3 border-r border-slate-100 flex flex-col justify-between">
-                      <span className="font-mono text-xs font-bold text-slate-600 tabular-nums">
-                        {hourSlot} hs
+                    <div className="col-span-2 py-3 px-3 border-r border-slate-100 flex items-center justify-between">
+                      <span className="font-mono text-xs font-semibold text-slate-500 tabular-nums">
+                        {hourSlot}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onOpenScheduleModal(selectedDate, hourSlot)
-                        }
-                        className="text-[11px] font-semibold text-emerald-700 hover:underline text-left mt-1 whitespace-nowrap"
-                      >
-                        + Agendar
-                      </button>
                     </div>
 
-                    <div className="col-span-10 sm:col-span-10 p-2.5 space-y-2">
+                    <div className="col-span-10 p-2 space-y-2">
                       {slotJobs.length === 0 ? (
                         <div className="h-full flex items-center justify-between text-xs text-slate-400 px-2">
-                          <span>Horario libre</span>
+                          <span>Disponible</span>
                           <button
                             type="button"
                             onClick={() =>
                               onOpenScheduleModal(selectedDate, hourSlot)
                             }
-                            className="text-xs font-medium text-slate-500 hover:text-emerald-700 whitespace-nowrap"
+                            className="text-xs font-medium text-slate-500 hover:text-slate-900 whitespace-nowrap cursor-pointer"
                           >
-                            Asignar cliente a las {hourSlot}
+                            + Agendar a las {hourSlot}
                           </button>
                         </div>
                       ) : (
@@ -397,94 +350,56 @@ export function CalendarAgendaView({
                             job.scheduledTime || hourSlot,
                             job.estimatedMinutes
                           );
-                          const history = getClientPriceHistory(
-                            job.propertyId,
-                            job.clientName,
-                            invoices
-                          );
                           const isCompleted = job.status === 'Completado';
 
                           return (
                             <div
                               key={job.id}
-                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
                                 isCompleted
-                                  ? 'bg-slate-50 border-slate-200 opacity-85'
-                                  : 'bg-emerald-50/40 border-emerald-200/90'
+                                  ? 'bg-emerald-50/40 border-emerald-200'
+                                  : 'bg-white border-slate-200 shadow-2xs'
                               }`}
                             >
                               <div className="space-y-0.5 min-w-0 flex-1">
-                                <div className="flex items-center gap-2 text-xs font-mono text-slate-600 tabular-nums">
-                                  <Clock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                <div className="flex items-center gap-2 text-xs font-mono text-slate-500 tabular-nums">
+                                  <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                   <span className="font-bold text-slate-900">
-                                    {job.scheduledTime} – {endTime} hs
+                                    {job.scheduledTime} – {endTime}
                                   </span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>~{job.estimatedMinutes} min</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span className="font-sans font-semibold text-emerald-800">
+                                  <span>·</span>
+                                  <span className="font-sans font-semibold text-emerald-700">
                                     {job.status}
                                   </span>
                                 </div>
-                                <div className="text-sm font-bold text-slate-900">
+                                <div className="text-sm font-bold text-slate-900 truncate">
                                   {job.clientName} — {job.address}
                                 </div>
-                                <div className="text-xs text-slate-600">
-                                  {job.neighborhood} · {job.propertyType} ·{' '}
-                                  <span className="font-mono tabular-nums">
-                                    {job.areaSqm} m²
-                                  </span>
-                                  {history.lastAmount && (
-                                    <span>
-                                      {' '}
-                                      · Último cobro: $
-                                      {history.lastAmount.toLocaleString(
-                                        'es-AR'
-                                      )}
-                                    </span>
-                                  )}
+                                <div className="text-xs text-slate-500">
+                                  {job.neighborhood} · {job.propertyType} ({job.areaSqm} m²)
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                <div className="text-right mr-1">
-                                  <div className="text-sm font-bold font-mono text-slate-900 tabular-nums">
-                                    ${job.price.toLocaleString('es-AR')}
-                                  </div>
-                                  <div className="text-[11px] text-slate-500">
-                                    {job.frequency}
-                                  </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="text-sm font-bold font-mono text-slate-900 tabular-nums mr-2">
+                                  ${job.price.toLocaleString('es-AR')}
                                 </div>
-
-                                <a
-                                  href={buildGoogleMapsNavUrl(job.coordinates)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title="Cómo llegar en Google Maps"
-                                  className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 whitespace-nowrap"
-                                >
-                                  <Navigation className="w-3.5 h-3.5 text-emerald-700" />
-                                  <span>Mapa</span>
-                                </a>
 
                                 <button
                                   type="button"
                                   onClick={() => onEditScheduledJob(job)}
-                                  title="Modificar fecha, hora, dirección o precio de esta cita"
-                                  className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 whitespace-nowrap"
+                                  className="min-h-[32px] px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
                                 >
-                                  <Pencil className="w-3.5 h-3.5 text-emerald-700" />
-                                  <span>Editar / Mover</span>
+                                  Editar
                                 </button>
 
                                 {!isCompleted && (
                                   <button
                                     type="button"
                                     onClick={() => onStartCompleteJob(job)}
-                                    className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 whitespace-nowrap"
+                                    className="min-h-[32px] px-2.5 py-1 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 cursor-pointer"
                                   >
-                                    <Check className="w-3.5 h-3.5" />
-                                    <span>Cobrar</span>
+                                    Cobrar
                                   </button>
                                 )}
 
@@ -495,7 +410,7 @@ export function CalendarAgendaView({
                                   }
                                   title="Quitar de la agenda"
                                   aria-label={`Quitar corte de ${job.clientName}`}
-                                  className="min-h-[36px] p-2 text-slate-400 hover:text-red-600 rounded-lg"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -511,51 +426,47 @@ export function CalendarAgendaView({
             </div>
           </div>
 
-          {/* Right: Summary of Selected Day & Quick Actions */}
+          {/* Right: Clean Summary of Selected Day */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="bg-[#0F291E] text-white rounded-2xl p-5 space-y-4">
+            <div className="bg-white border border-slate-200 text-slate-900 rounded-2xl p-5 space-y-4 shadow-2xs">
               <div>
-                <div className="text-xs font-mono text-emerald-300">
-                  RESUMEN DEL DÍA · {selectedDate}
+                <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-600 font-bold">
+                  Resumen del Día · {selectedDate}
                 </div>
-                <h3 className="text-base font-bold mt-1">
-                  {dayJobs.length} Cortes Programados
+                <h3 className="text-base font-bold mt-1 text-slate-900">
+                  {dayJobs.length} Visitas Programadas
                 </h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-emerald-800/70">
-                <div>
-                  <div className="text-xs text-emerald-200/80">
-                    Total Estimado
-                  </div>
-                  <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="text-xs text-slate-500">Total Estimado</div>
+                  <div className="text-lg font-bold font-mono text-slate-900 tabular-nums mt-0.5">
                     ${daySummary.totalRevenue.toLocaleString('es-AR')}
                   </div>
                 </div>
-                <div>
-                  <div className="text-xs text-emerald-200/80">
-                    Tiempo de Corte
-                  </div>
-                  <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="text-xs text-slate-500">Tiempo Estimado</div>
+                  <div className="text-lg font-bold font-mono text-slate-900 tabular-nums mt-0.5">
                     {Math.floor(daySummary.totalMinutes / 60)}h{' '}
                     {daySummary.totalMinutes % 60}m
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-2 pt-2">
+              <div className="space-y-2 pt-1">
                 <button
                   type="button"
                   onClick={() => onOpenRouteForDate(selectedDate)}
-                  className="min-h-[42px] w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold bg-emerald-500 text-slate-950 rounded-xl hover:bg-emerald-400 transition-colors whitespace-nowrap"
+                  className="min-h-[38px] w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
                 >
-                  <Compass className="w-4 h-4" />
-                  <span>Abrir Ruta Optimizada de este Día</span>
+                  <Compass className="w-4 h-4 text-emerald-400" />
+                  <span>Abrir Hoja de Ruta GPS</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenScheduleModal(selectedDate, '08:30')}
-                  className="min-h-[42px] w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold bg-emerald-900/90 text-emerald-100 border border-emerald-700 rounded-xl hover:bg-emerald-800 transition-colors whitespace-nowrap"
+                  className="min-h-[38px] w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Agendar Cliente Existente</span>
@@ -566,45 +477,42 @@ export function CalendarAgendaView({
         </div>
       )}
 
-      {/* VIEW 2: VISTA SEMANAL (7 Columnas Lunes a Domingo) */}
+      {/* VIEW 2: VISTA SEMANAL (7 Columnas Limpias Lunes a Domingo) */}
       {viewMode === 'semana' && (
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-2.5">
           {weekCells.map((cell) => {
             const isSelected = cell.dateStr === selectedDate;
-            const cellWeather = getWeatherForDate(cell.dateStr, baseCity);
             return (
               <div
                 key={cell.dateStr}
                 className={`bg-white rounded-2xl border flex flex-col justify-between overflow-hidden transition-all ${
                   isSelected
-                    ? 'border-emerald-700 ring-2 ring-emerald-700/15 shadow-xs'
-                    : cellWeather.isRainRisk
-                    ? 'border-sky-300/90'
-                    : 'border-slate-200/90'
+                    ? 'border-slate-900 ring-2 ring-slate-900/10 shadow-xs'
+                    : 'border-slate-200'
                 }`}
               >
                 <div>
-                  {/* Day Header */}
+                  {/* Clean Day Header */}
                   <div
                     onClick={() => onSelectDate(cell.dateStr)}
                     className={`p-3 border-b cursor-pointer flex items-center justify-between ${
                       isSelected
-                        ? 'bg-[#0F291E] text-white border-emerald-900'
+                        ? 'bg-slate-900 text-white border-slate-900'
                         : cell.isToday
-                        ? 'bg-emerald-50/80 text-slate-900 border-emerald-200'
+                        ? 'bg-emerald-50/70 text-slate-900 border-emerald-200'
                         : 'bg-slate-50/70 text-slate-900 border-slate-200'
                     }`}
                   >
                     <div>
                       <div
-                        className={`text-[11px] font-semibold uppercase ${
-                          isSelected ? 'text-emerald-300' : 'text-slate-500'
+                        className={`text-[10px] font-mono font-semibold uppercase ${
+                          isSelected ? 'text-emerald-400' : 'text-slate-500'
                         }`}
                       >
                         {cell.weekdayShort}
                         {cell.isToday ? ' · Hoy' : ''}
                       </div>
-                      <div className="text-base font-bold font-mono tabular-nums">
+                      <div className="text-base font-bold font-mono tabular-nums leading-tight mt-0.5">
                         {cell.dayOfMonth}/{cell.dateStr.slice(5, 7)}
                       </div>
                     </div>
@@ -612,106 +520,54 @@ export function CalendarAgendaView({
                     <div className="text-right font-mono tabular-nums">
                       <div
                         className={`text-xs font-bold ${
-                          isSelected ? 'text-emerald-300' : 'text-emerald-800'
+                          isSelected ? 'text-emerald-400' : 'text-slate-900'
                         }`}
                       >
                         ${cell.totalRevenue.toLocaleString('es-AR')}
                       </div>
                       <div
-                        className={`text-[11px] ${
+                        className={`text-[10px] ${
                           isSelected ? 'text-slate-300' : 'text-slate-500'
                         }`}
                       >
-                        {cell.jobs.length} cortes
+                        {cell.jobs.length} órd.
                       </div>
                     </div>
                   </div>
 
-                  {/* Weather & Cutting Window Strip for the Day */}
-                  <div
-                    onClick={() => onSelectDate(cell.dateStr)}
-                    className={`px-3 py-1.5 border-b text-[11px] font-mono flex items-center justify-between cursor-pointer ${
-                      cellWeather.isRainRisk
-                        ? 'bg-sky-50 text-sky-900 border-sky-200 font-semibold'
-                        : 'bg-amber-50/40 text-slate-600 border-slate-100'
-                    }`}
-                  >
-                    <span className="inline-flex items-center gap-1 truncate">
-                      {cellWeather.condition === 'Alerta Lluvia' ? (
-                        <CloudRain className="w-3 h-3 text-sky-600 shrink-0" />
-                      ) : cellWeather.condition === 'Parcialmente Nublado' ? (
-                        <CloudSun className="w-3 h-3 text-amber-600 shrink-0" />
-                      ) : (
-                        <Sun className="w-3 h-3 text-amber-500 shrink-0" />
-                      )}
-                      <span className="truncate">
-                        {cellWeather.isRainRisk ? 'Lluvia' : 'Seco'}{' '}
-                        {cellWeather.tempMax}°C
-                      </span>
-                    </span>
-                    <span className="tabular-nums shrink-0">
-                      {cellWeather.rainProb}% 💧
-                    </span>
-                  </div>
-
-                  {/* Jobs inside the Day Column */}
-                  <div className="p-2.5 space-y-2 md:min-h-[210px]">
+                  {/* Clean Job Cards inside Day Column */}
+                  <div className="p-2 space-y-1.5 md:min-h-[220px]">
                     {cell.jobs.length === 0 ? (
-                      <div className="py-4 md:h-36 flex flex-col items-center justify-center text-center p-2 text-xs text-slate-400">
-                        <span>Sin cortes agendados</span>
+                      <div className="py-6 md:h-40 flex flex-col items-center justify-center text-center p-2 text-xs text-slate-400">
+                        <span>Libre</span>
                       </div>
                     ) : (
                       cell.jobs.map((job) => {
-                        const endTime = computeEndTimeFromStart(
-                          job.scheduledTime || '08:00',
-                          job.estimatedMinutes
-                        );
+                        const isCompleted = job.status === 'Completado';
                         return (
                           <div
                             key={job.id}
-                            onClick={() => onSelectDate(cell.dateStr)}
-                            className={`p-2.5 rounded-xl border text-left cursor-pointer transition-colors ${
-                              job.status === 'Completado'
-                                ? 'bg-slate-50 border-slate-200 text-slate-600'
-                                : 'bg-white border-slate-200 hover:border-emerald-600'
+                            onClick={() => onEditScheduledJob(job)}
+                            title="Tocá para editar o reprogramar"
+                            className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                              isCompleted
+                                ? 'bg-emerald-50/40 border-emerald-200 text-slate-700'
+                                : 'bg-white border-slate-200 hover:border-slate-400 shadow-2xs'
                             }`}
                           >
-                            <div className="flex items-center justify-between text-[11px] font-mono text-emerald-800 font-bold tabular-nums">
-                              <span>
-                                {job.scheduledTime}–{endTime}
+                            <div className="flex items-center justify-between text-[11px] font-mono font-bold tabular-nums">
+                              <span className="text-slate-600">
+                                {job.scheduledTime} hs
                               </span>
-                              <span>${job.price.toLocaleString('es-AR')}</span>
+                              <span className="text-emerald-700">
+                                ${job.price.toLocaleString('es-AR')}
+                              </span>
                             </div>
-                            <div className="text-xs font-bold text-slate-900 mt-0.5 truncate">
+                            <div className="text-xs font-bold text-slate-900 mt-1 truncate">
                               {job.clientName}
                             </div>
                             <div className="text-[11px] text-slate-500 truncate">
-                              {job.address} · {job.neighborhood}
-                            </div>
-                            <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onEditScheduledJob(job);
-                                }}
-                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 hover:underline"
-                              >
-                                <Pencil className="w-3 h-3" />
-                                <span>Editar / Mover</span>
-                              </button>
-                              {job.status !== 'Completado' && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onStartCompleteJob(job);
-                                  }}
-                                  className="text-[11px] font-bold text-slate-700 hover:text-emerald-800"
-                                >
-                                  Cobrar
-                                </button>
-                              )}
+                              {job.address}
                             </div>
                           </div>
                         );
@@ -720,26 +576,16 @@ export function CalendarAgendaView({
                   </div>
                 </div>
 
-                {/* Column Footer Actions */}
-                <div className="p-2 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-1">
+                {/* Single Clean Column Footer Button */}
+                <div className="p-2 border-t border-slate-100 bg-slate-50/50">
                   <button
                     type="button"
                     onClick={() => onOpenScheduleModal(cell.dateStr, '08:30')}
-                    className="min-h-[34px] flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-white border border-slate-200 rounded-lg hover:bg-emerald-50 whitespace-nowrap"
+                    className="min-h-[30px] w-full inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 cursor-pointer"
                   >
-                    <Plus className="w-3 h-3" />
+                    <Plus className="w-3 h-3 text-emerald-600" />
                     <span>Agendar</span>
                   </button>
-                  {cell.jobs.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenRouteForDate(cell.dateStr)}
-                      title="Ver ruta en mapa"
-                      className="min-h-[34px] px-2.5 py-1 text-[11px] font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 whitespace-nowrap"
-                    >
-                      Ruta
-                    </button>
-                  )}
                 </div>
               </div>
             );

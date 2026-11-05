@@ -114,27 +114,20 @@ export function PendingApprovalScreen({
   };
 
   return (
-    <div className="min-h-screen bg-[#0B1512] text-slate-100 flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
-      {/* Subtle architectural background grid */}
-      <div
-        className="pointer-events-none fixed inset-0 opacity-20"
-        style={{
-          backgroundImage:
-            'radial-gradient(circle at 20% 20%, rgba(13, 148, 136, 0.28), transparent 45%), radial-gradient(circle at 80% 80%, rgba(5, 150, 105, 0.2), transparent 50%)',
-        }}
-      />
+    <div className="min-h-screen bg-architectural-grid text-slate-900 flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
+      <div className="fixed top-0 inset-x-0 h-1 bg-slate-900 z-20" />
 
       {/* Top Bar */}
-      <header className="relative z-10 max-w-4xl w-full mx-auto flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
+      <header className="relative z-10 max-w-4xl w-full mx-auto flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-teal-500/15 border border-teal-400/30 flex items-center justify-center text-teal-300 font-bold">
+          <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white font-bold">
             <Lock className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs uppercase tracking-widest text-teal-400 font-bold block">
+            <span className="text-xs uppercase tracking-widest text-blue-600 font-bold block">
               Control de Acceso · Licencia de Pago Único
             </span>
-            <h1 className="text-base sm:text-lg font-bold text-white tracking-tight">
+            <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
               PastoPro Argentina
             </h1>
           </div>
@@ -143,7 +136,7 @@ export function PendingApprovalScreen({
         <button
           type="button"
           onClick={onSignOut}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-rose-500/20 border border-white/15 hover:border-rose-400/40 text-xs font-semibold text-white transition-colors cursor-pointer"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-xs font-semibold text-slate-700 hover:text-rose-700 transition-colors cursor-pointer"
         >
           <LogOut className="w-3.5 h-3.5" />
           <span>Cerrar Sesión</span>
@@ -152,20 +145,20 @@ export function PendingApprovalScreen({
 
       {/* Main Gate Card */}
       <main className="relative z-10 max-w-2xl w-full mx-auto my-auto py-6">
-        <div className="bg-white text-slate-900 rounded-3xl shadow-2xl border border-slate-200 overflow-hidden break-words">
+        <div className="bg-white text-slate-900 rounded-2xl shadow-lg border border-slate-200/90 overflow-hidden break-words">
           <div
             className={`px-5 sm:px-6 py-5 border-b flex items-center justify-between gap-3 ${
               approvalStatus === 'revoked'
-                ? 'bg-rose-950 text-white border-rose-900'
-                : 'bg-slate-900 text-white border-slate-800'
+                ? 'bg-rose-50 text-rose-950 border-rose-200'
+                : 'bg-slate-50 text-slate-900 border-slate-200'
             }`}
           >
             <div className="flex items-center gap-3 min-w-0">
               <div
                 className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
                   approvalStatus === 'revoked'
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-400/30'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
+                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                    : 'bg-amber-100 text-amber-700 border border-amber-200'
                 }`}
               >
                 {approvalStatus === 'revoked' ? (
@@ -175,12 +168,12 @@ export function PendingApprovalScreen({
                 )}
               </div>
               <div className="min-w-0">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300 block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 block">
                   {approvalStatus === 'revoked'
                     ? 'Estado: Acceso Revocado'
                     : 'Estado: Pendiente de Aprobación'}
                 </span>
-                <h2 className="text-lg sm:text-xl font-extrabold tracking-tight break-words">
+                <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 break-words">
                   Validación de Licencia Requerida
                 </h2>
               </div>
@@ -310,9 +303,9 @@ export function PendingApprovalScreen({
         </div>
       </main>
 
-      <footer className="relative z-10 max-w-4xl w-full mx-auto text-center text-xs text-slate-400 pt-4 border-t border-white/10">
+      <footer className="relative z-10 max-w-4xl w-full mx-auto text-center text-xs text-slate-500 pt-4 border-t border-slate-200">
         Soporte de Activación de Licencias · Administrador Principal:{' '}
-        <span className="text-teal-300 font-mono">{PRIMARY_ADMIN_EMAIL}</span>
+        <span className="text-slate-900 font-mono font-semibold">{PRIMARY_ADMIN_EMAIL}</span>
       </footer>
     </div>
   );
@@ -321,11 +314,13 @@ export function PendingApprovalScreen({
 interface AdminControlPanelViewProps {
   currentUserEmail: string | null | undefined;
   onShowToast?: (msg: string) => void;
+  onNavigateToApp?: () => void;
 }
 
 export function AdminControlPanelView({
   currentUserEmail,
   onShowToast,
+  onNavigateToApp,
 }: AdminControlPanelViewProps) {
   const isAdmin = isPrimaryAdminEmail(currentUserEmail);
   const [users, setUsers] = useState<RegisteredTenantSummary[]>([]);
@@ -336,11 +331,19 @@ export function AdminControlPanelView({
     'all' | 'pending' | 'approved' | 'revoked'
   >('all');
 
+  // Active user conversation / request drawer state
+  const [activeChatUid, setActiveChatUid] = useState<string | null>(null);
+  const [chatMessageDraft, setChatMessageDraft] = useState('');
+  const [adminNoteDraft, setAdminNoteDraft] = useState('');
+  const [userPhoneDraft, setUserPhoneDraft] = useState('');
+
   // Form to pre-register or add a client account manually
   const [showAddForm, setShowAddForm] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newBusiness, setNewBusiness] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newRequestMsg, setNewRequestMsg] = useState('');
   const [newCity, setNewCity] = useState('Rosario, Santa Fe');
   const [newPreApprove, setNewPreApprove] = useState(false);
 
@@ -358,6 +361,37 @@ export function AdminControlPanelView({
   useEffect(() => {
     loadAllUsers();
   }, [isAdmin]);
+
+  const handleOpenChatForUser = (u: RegisteredTenantSummary) => {
+    if (activeChatUid === u.uid) {
+      setActiveChatUid(null);
+      return;
+    }
+    setActiveChatUid(u.uid);
+    setAdminNoteDraft(u.adminNotes || '');
+    setUserPhoneDraft(u.phone || '');
+    const defaultReply =
+      u.approvalStatus === 'pending'
+        ? `Hola ${u.displayName}! Vi tu solicitud de acceso en PastoPro para "${u.businessName}" (${u.city}). Te escribo para coordinar la activación de tu licencia y darte permiso de uso.`
+        : u.approvalStatus === 'approved'
+        ? `Hola ${u.displayName}! Tu cuenta de PastoPro para "${u.businessName}" ya tiene el permiso aprobado y activo. Avisame cualquier consulta.`
+        : `Hola ${u.displayName}, te contacto desde la administración de PastoPro por el estado de tu cuenta (${u.email}).`;
+    setChatMessageDraft(defaultReply);
+  };
+
+  const handleSaveUserNotesAndPhone = (target: RegisteredTenantSummary) => {
+    const updated: RegisteredTenantSummary = {
+      ...target,
+      phone: userPhoneDraft.trim(),
+      adminNotes: adminNoteDraft.trim(),
+      updatedAt: getTodayIsoLocal(),
+    };
+    const nextList = upsertLocalTenantSummary(updated);
+    setUsers(nextList);
+    if (onShowToast) {
+      onShowToast(`Datos de seguimiento guardados para ${target.displayName}.`);
+    }
+  };
 
   const handleToggleApproval = async (
     target: RegisteredTenantSummary,
@@ -384,8 +418,8 @@ export function AdminControlPanelView({
         if (onShowToast) {
           onShowToast(
             approve
-              ? `Acceso APROBADO para ${target.email}`
-              : `Acceso REVOCADO para ${target.email}`
+              ? `Permiso de uso APROBADO para ${target.displayName} (${target.email})`
+              : `Permiso de uso REVOCADO para ${target.displayName} (${target.email})`
           );
         }
       }
@@ -407,6 +441,10 @@ export function AdminControlPanelView({
       displayName: newName.trim() || cleanEmail.split('@')[0],
       businessName: newBusiness.trim() || 'Servicio de Jardinería',
       city: newCity.trim() || 'Venado Tuerto, Santa Fe',
+      phone: newPhone.trim(),
+      requestMessage:
+        newRequestMsg.trim() ||
+        'Solicitud cargada manualmente por el administrador.',
       registeredAt: getTodayIsoLocal(),
       updatedAt: getTodayIsoLocal(),
       isApproved: newPreApprove,
@@ -424,10 +462,12 @@ export function AdminControlPanelView({
     setNewEmail('');
     setNewName('');
     setNewBusiness('');
+    setNewPhone('');
+    setNewRequestMsg('');
     setShowAddForm(false);
     if (onShowToast) {
       onShowToast(
-        `Cuenta ${cleanEmail} registrada (${newPreApprove ? 'Aprobada' : 'Pendiente'}).`
+        `Cuenta ${cleanEmail} registrada (${newPreApprove ? 'Permiso Aprobado' : 'Pendiente de Permiso'}).`
       );
     }
   };
@@ -449,7 +489,8 @@ export function AdminControlPanelView({
         u.email.toLowerCase().includes(q) ||
         u.displayName.toLowerCase().includes(q) ||
         u.businessName.toLowerCase().includes(q) ||
-        u.city.toLowerCase().includes(q)
+        u.city.toLowerCase().includes(q) ||
+        (u.phone && u.phone.toLowerCase().includes(q))
       );
     });
   }, [users, searchQuery, statusFilter]);
@@ -466,7 +507,7 @@ export function AdminControlPanelView({
 
   if (!isAdmin) {
     return (
-      <div className="bg-white rounded-2xl border border-rose-200 p-8 text-center my-6">
+      <div className="bg-white rounded-xl border border-rose-200 p-8 text-center my-6">
         <ShieldAlert className="w-10 h-10 text-rose-600 mx-auto mb-3" />
         <h2 className="text-lg font-bold text-slate-900">
           Acceso Restringido al Administrador Principal
@@ -480,129 +521,177 @@ export function AdminControlPanelView({
   }
 
   return (
-    <div className="space-y-5" data-testid="admin-control-panel">
-      {/* Header Banner */}
-      <div className="bg-slate-900 text-white rounded-2xl p-5 sm:p-6 border border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-400">
-            <ShieldCheck className="w-4 h-4" />
-            <span>Panel Exclusivo de Administrador · Licencia Pago Único</span>
+    <div className="space-y-4" data-testid="admin-control-panel">
+      {/* Cabecera Unificada de Control de Accesos, Solicitudes y Permisos */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+        <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-700">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span>Gobierno de Plataforma · Control de Usuarios</span>
+            </div>
+            <h2 className="font-display text-lg sm:text-xl font-bold tracking-tight text-slate-900">
+              Solicitudes de Uso, Permisos y Contacto con Usuarios
+            </h2>
+            <p className="text-xs text-slate-500 max-w-2xl">
+              Revisá las solicitudes entrantes, charlá directamente por WhatsApp o correo con cada interesado y aprobá o revocá su permiso de acceso en tiempo real.
+            </p>
           </div>
-          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            Control de Acceso y Aprobación Manual de Usuarios
-          </h2>
-          <p className="text-xs sm:text-sm text-slate-300 max-w-2xl">
-            Todo nuevo usuario queda bloqueado en estado{' '}
-            <strong className="text-amber-300">Pendiente de Aprobación</strong>{' '}
-            hasta que valides su pago único y presiones{' '}
-            <strong className="text-teal-300">Aprobar Acceso</strong>.
-          </p>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowAddForm((prev) => !prev)}
+              className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+              <span>+ Cargar / Pre-autorizar Usuario</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={loadAllUsers}
+              disabled={isLoading}
+              className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
+              />
+              <span>Actualizar</span>
+            </button>
+
+            {onNavigateToApp && (
+              <button
+                type="button"
+                onClick={onNavigateToApp}
+                className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Ir a Hoja de Ruta</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => setShowAddForm((prev) => !prev)}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition-colors cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Registrar / Pre-autorizar Cuenta</span>
-          </button>
+        {/* 4 KPIs Limpios */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/50">
+          <div className="p-3.5 sm:px-5">
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-amber-700">
+              <span>Solicitudes Pendientes</span>
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
+            </div>
+            <p className="font-display text-2xl font-bold font-mono text-amber-700 mt-1">
+              {stats.pending}
+            </p>
+            <span className="text-[11px] text-slate-500">
+              Esperando tu permiso de uso
+            </span>
+          </div>
 
-          <button
-            type="button"
-            onClick={loadAllUsers}
-            disabled={isLoading}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold transition-colors cursor-pointer"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
+          <div className="p-3.5 sm:px-5">
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+              <span>Permisos Aprobados</span>
+              <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+            </div>
+            <p className="font-display text-2xl font-bold font-mono text-emerald-700 mt-1">
+              {stats.approved}
+            </p>
+            <span className="text-[11px] text-slate-500">
+              Cuentas con acceso activo
+            </span>
+          </div>
+
+          <div className="p-3.5 sm:px-5">
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-rose-700">
+              <span>Accesos Revocados</span>
+              <UserX className="w-3.5 h-3.5 text-rose-600" />
+            </div>
+            <p className="font-display text-2xl font-bold font-mono text-rose-700 mt-1">
+              {stats.revoked}
+            </p>
+            <span className="text-[11px] text-slate-500">
+              Sin acceso al sistema
+            </span>
+          </div>
+
+          <div className="p-3.5 sm:px-5">
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              <span>Total Registrados</span>
+              <Users className="w-3.5 h-3.5 text-slate-400" />
+            </div>
+            <p className="font-display text-2xl font-bold font-mono text-slate-900 mt-1">
+              {stats.total}
+            </p>
+            <span className="text-[11px] text-slate-500">
+              Empresas en la plataforma
+            </span>
+          </div>
+        </div>
+
+        {/* Barra de Búsqueda y Filtros de Estado */}
+        <div className="px-4 sm:px-5 py-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nombre, correo, WhatsApp, empresa o ciudad..."
+              className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-900 bg-slate-50/70 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
             />
-            <span>Sincronizar Firestore</span>
-          </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/80">
+            {(
+              [
+                { id: 'all', label: `Todos (${stats.total})` },
+                { id: 'pending', label: `Solicitudes Pendientes (${stats.pending})` },
+                { id: 'approved', label: `Con Permiso (${stats.approved})` },
+                { id: 'revoked', label: `Revocados (${stats.revoked})` },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                  statusFilter === tab.id
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* KPI Metrics Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-            <span>Cuentas Registradas</span>
-            <Users className="w-4 h-4 text-slate-400" />
-          </div>
-          <p className="text-2xl font-extrabold font-mono text-slate-900 mt-1">
-            {stats.total}
-          </p>
-          <span className="text-[11px] text-slate-500">
-            Base multi-tenant Argentina
-          </span>
-        </div>
-
-        <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200 shadow-xs">
-          <div className="flex items-center justify-between text-xs font-bold text-amber-900">
-            <span>Pendientes de Pago</span>
-            <Clock className="w-4 h-4 text-amber-600" />
-          </div>
-          <p className="text-2xl font-extrabold font-mono text-amber-900 mt-1">
-            {stats.pending}
-          </p>
-          <span className="text-[11px] text-amber-800">
-            Requieren aprobación manual
-          </span>
-        </div>
-
-        <div className="bg-teal-50/70 rounded-2xl p-4 border border-teal-200 shadow-xs">
-          <div className="flex items-center justify-between text-xs font-bold text-teal-900">
-            <span>Licencias Aprobadas</span>
-            <UserCheck className="w-4 h-4 text-teal-700" />
-          </div>
-          <p className="text-2xl font-extrabold font-mono text-teal-900 mt-1">
-            {stats.approved}
-          </p>
-          <span className="text-[11px] text-teal-800">
-            Acceso único habilitado
-          </span>
-        </div>
-
-        <div className="bg-rose-50/70 rounded-2xl p-4 border border-rose-200 shadow-xs">
-          <div className="flex items-center justify-between text-xs font-bold text-rose-900">
-            <span>Accesos Revocados</span>
-            <UserX className="w-4 h-4 text-rose-600" />
-          </div>
-          <p className="text-2xl font-extrabold font-mono text-rose-900 mt-1">
-            {stats.revoked}
-          </p>
-          <span className="text-[11px] text-rose-800">
-            Bloqueados inmediatamente
-          </span>
-        </div>
-      </div>
-
-      {/* Collapsible Manual Registration / Pre-Authorization Form */}
+      {/* Formulario Desplegable para Pre-autorizar o Cargar Solicitud */}
       {showAddForm && (
         <form
           onSubmit={handleCreateManualAccountRecord}
-          className="bg-white rounded-2xl p-5 border-2 border-teal-600/30 shadow-md space-y-4"
+          className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm space-y-4"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Registrar o Pre-Autorizar Cliente en el Sistema
+                Registrar o Pre-Autorizar Usuario Manualmente
               </h3>
               <p className="text-xs text-slate-500">
-                Podés cargar el correo de un jardinero comprador y definir si ingresa aprobado o pendiente.
+                Cargá los datos de un cliente interesado y definí si entra con permiso activo o en revisión.
               </p>
             </div>
             <button
               type="button"
               onClick={() => setShowAddForm(false)}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+              className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
             >
               Cerrar
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Correo Electrónico *
@@ -613,7 +702,7 @@ export function AdminControlPanelView({
                 value={newEmail}
                 onChange={(e) => setNewEmail(e.target.value)}
                 placeholder="cliente@ejemplo.com"
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
               />
             </div>
 
@@ -626,7 +715,20 @@ export function AdminControlPanelView({
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Ej. Carlos Gómez"
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                WhatsApp de Contacto
+              </label>
+              <input
+                type="text"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="Ej. +54 9 341 555-1234"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono"
               />
             </div>
 
@@ -639,185 +741,228 @@ export function AdminControlPanelView({
                 value={newBusiness}
                 onChange={(e) => setNewBusiness(e.target.value)}
                 placeholder="Ej. Parques del Litoral"
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
               />
             </div>
 
             <div>
               <CityAutocomplete
                 id="admin-new-user-city"
-                label="Ciudad / Localidad (Argentina)"
+                label="Ciudad / Localidad"
                 value={newCity}
                 onChange={setNewCity}
                 onSelectCity={(sug) => setNewCity(sug.fullName)}
               />
             </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Nota o Motivo de Solicitud
+              </label>
+              <input
+                type="text"
+                value={newRequestMsg}
+                onChange={(e) => setNewRequestMsg(e.target.value)}
+                placeholder="Ej. Consultó por Instagram, quiere probar"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
             <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
               <input
                 type="checkbox"
                 checked={newPreApprove}
                 onChange={(e) => setNewPreApprove(e.target.checked)}
-                className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                className="rounded border-slate-300 text-slate-900"
               />
-              <span>
-                Habilitar con pago validado inmediatamente (Aprobado)
-              </span>
+              <span>Habilitar con permiso aprobado inmediatamente</span>
             </label>
 
             <button
               type="submit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
-              <span>Guardar Cuenta en Registro</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Guardar Usuario</span>
             </button>
           </div>
         </form>
       )}
 
-      {/* Search & Status Filters */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar usuario por email, nombre, empresa o ciudad de Argentina..."
-            className="w-full pl-10 pr-3.5 py-2 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
-          />
-        </div>
+      {/* Listado de Usuarios, Solicitudes de Uso y Conversación Directa */}
+      <div className="space-y-3">
+        {filteredUsers.length === 0 ? (
+          <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-xs text-slate-500">
+            No se encontraron solicitudes ni usuarios con ese filtro.
+          </div>
+        ) : (
+          filteredUsers.map((userItem) => {
+            const isMasterAdmin = isPrimaryAdminEmail(userItem.email);
+            const isBusy = processingUid === userItem.uid;
+            const isChatOpen = activeChatUid === userItem.uid;
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {(
-            [
-              { id: 'all', label: `Todos (${stats.total})` },
-              { id: 'pending', label: `Pendientes (${stats.pending})` },
-              { id: 'approved', label: `Aprobados (${stats.approved})` },
-              { id: 'revoked', label: `Revocados (${stats.revoked})` },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                statusFilter === tab.id
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+            const directWaText =
+              userItem.approvalStatus === 'pending'
+                ? `Hola ${userItem.displayName}! Soy el administrador de PastoPro. Recibí tu solicitud de acceso para "${userItem.businessName}" (${userItem.city}). ¿Cómo estás?`
+                : `Hola ${userItem.displayName}! Te escribo desde PastoPro por tu cuenta activa de "${userItem.businessName}".`;
 
-      {/* Users List */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-        <div className="divide-y divide-slate-200">
-          {filteredUsers.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              No se encontraron cuentas con ese criterio de búsqueda.
-            </div>
-          ) : (
-            filteredUsers.map((userItem) => {
-              const isMasterAdmin = isPrimaryAdminEmail(userItem.email);
-              const isBusy = processingUid === userItem.uid;
+            const directWaUrl = buildSafeWhatsAppUrl(
+              userItem.phone || '5493462551234',
+              directWaText
+            );
 
-              return (
-                <div
-                  key={userItem.uid}
-                  className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/80 transition-colors"
-                >
-                  <div className="space-y-1.5 min-w-0 flex-1">
+            return (
+              <div
+                key={userItem.uid}
+                data-testid="admin-user-request-card"
+                className={`bg-white rounded-xl border transition-all shadow-2xs overflow-hidden ${
+                  userItem.approvalStatus === 'pending'
+                    ? 'border-amber-300/90'
+                    : 'border-slate-200'
+                }`}
+              >
+                <div className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Columna Izquierda: Identidad + Solicitud de Uso */}
+                  <div className="space-y-2 min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm sm:text-base font-extrabold text-slate-900 break-all">
-                        {userItem.email}
+                      <span className="font-display text-sm sm:text-base font-bold text-slate-900">
+                        {userItem.displayName}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-500">
+                        · {userItem.businessName}
                       </span>
 
                       {isMasterAdmin ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-900 text-teal-300">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900 text-emerald-400">
                           <KeyRound className="w-3 h-3" />
                           <span>Administrador Principal</span>
                         </span>
                       ) : userItem.isApproved &&
                         userItem.approvalStatus === 'approved' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-teal-100 text-teal-900 border border-teal-300">
-                          <CheckCircle2 className="w-3 h-3 text-teal-700" />
-                          <span>Aprobado · Licencia Activa</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Permiso Aprobado</span>
                         </span>
                       ) : userItem.approvalStatus === 'revoked' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300">
-                          <UserX className="w-3 h-3 text-rose-700" />
-                          <span>Acceso Revocado</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                          <UserX className="w-3 h-3 text-rose-600" />
+                          <span>Permiso Revocado</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
-                          <Clock className="w-3 h-3 text-amber-700" />
-                          <span>Pendiente de Aprobación</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          <Clock className="w-3 h-3 text-amber-600" />
+                          <span>Solicitud Pendiente de Permiso</span>
                         </span>
                       )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-                      <span>
-                        <strong className="text-slate-800">Titular:</strong>{' '}
-                        {userItem.displayName}
+                      <span className="font-mono text-slate-800 font-medium break-all">
+                        {userItem.email}
                       </span>
-                      <span>
-                        <strong className="text-slate-800">Empresa:</strong>{' '}
-                        {userItem.businessName}
-                      </span>
+                      {userItem.phone && (
+                        <span className="font-mono text-emerald-700 font-semibold">
+                          WA: {userItem.phone}
+                        </span>
+                      )}
                       <span className="inline-flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-teal-700" />
+                        <MapPin className="w-3.5 h-3.5 text-slate-400" />
                         <span>{userItem.city}</span>
                       </span>
-                      <span className="font-mono text-[11px] text-slate-500">
+                      <span className="font-mono text-[11px] text-slate-400">
                         Alta: {userItem.registeredAt}
                       </span>
                     </div>
+
+                    {/* Mensaje de Solicitud de Uso */}
+                    {!isMasterAdmin && (
+                      <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 text-xs text-slate-700 flex flex-col gap-1">
+                        <div>
+                          <span className="font-semibold text-slate-900">
+                            Solicitud de uso:{' '}
+                          </span>
+                          <span>
+                            {userItem.requestMessage ||
+                              'Solicita activación de permiso para utilizar PastoPro en su empresa.'}
+                          </span>
+                        </div>
+                        {userItem.adminNotes && (
+                          <div className="text-[11px] text-emerald-800 font-medium pt-1 border-t border-slate-200/60">
+                            <strong>Nota Admin:</strong> {userItem.adminNotes}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Quick Action Buttons: Aprobar Acceso & Revocar Acceso */}
+                  {/* Columna Derecha: Botones para Charlar Solicitud y Dar/Revocar Permiso */}
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     {isMasterAdmin ? (
-                      <span className="text-xs font-semibold text-slate-400 px-3 py-1.5 bg-slate-100 rounded-xl">
-                        Cuenta Maestra Protegida
+                      <span className="text-xs font-semibold text-slate-500 px-3 py-1.5 bg-slate-100 rounded-lg">
+                        Cuenta Maestra Activa
                       </span>
                     ) : (
                       <>
+                        {/* 1. Charlar por WhatsApp directo */}
+                        <a
+                          href={directWaUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`whatsapp-user-${userItem.uid}`}
+                          className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors cursor-pointer"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Charlar por WhatsApp</span>
+                        </a>
+
+                        {/* 2. Abrir panel de Respuesta / Notas */}
                         <button
                           type="button"
+                          onClick={() => handleOpenChatForUser(userItem)}
+                          data-testid={`open-chat-drawer-${userItem.uid}`}
+                          className={`min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                            isChatOpen
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          <span>{isChatOpen ? 'Cerrar Chat' : 'Responder / Notas'}</span>
+                        </button>
+
+                        {/* 3. Dar Permiso (Aprobar Acceso) */}
+                        <button
+                          type="button"
+                          data-testid={`approve-user-${userItem.uid}`}
                           disabled={
                             isBusy ||
                             (userItem.isApproved &&
                               userItem.approvalStatus === 'approved')
                           }
                           onClick={() => handleToggleApproval(userItem, true)}
-                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          className={`min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                             userItem.isApproved &&
                             userItem.approvalStatus === 'approved'
                               ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                              : 'bg-teal-700 hover:bg-teal-800 text-white shadow-xs'
+                              : 'bg-slate-900 hover:bg-slate-800 text-white shadow-2xs'
                           }`}
                         >
-                          <UserCheck className="w-3.5 h-3.5" />
-                          <span>Aprobar Acceso</span>
+                          <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Dar Permiso</span>
                         </button>
 
+                        {/* 4. Revocar Permiso */}
                         <button
                           type="button"
+                          data-testid={`revoke-user-${userItem.uid}`}
                           disabled={
                             isBusy ||
                             (!userItem.isApproved &&
                               userItem.approvalStatus === 'revoked')
                           }
                           onClick={() => handleToggleApproval(userItem, false)}
-                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          className={`min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                             !userItem.isApproved &&
                             userItem.approvalStatus === 'revoked'
                               ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
@@ -825,16 +970,124 @@ export function AdminControlPanelView({
                           }`}
                         >
                           <UserX className="w-3.5 h-3.5" />
-                          <span>Revocar Acceso</span>
+                          <span>Revocar</span>
                         </button>
                       </>
                     )}
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
+
+                {/* Panel Desplegable para Charlar la Solicitud de Uso y Guardar Seguimiento */}
+                {isChatOpen && !isMasterAdmin && (
+                  <div
+                    data-testid="admin-request-conversation-panel"
+                    className="px-4 sm:px-5 py-4 bg-slate-50 border-t border-slate-200 grid grid-cols-1 lg:grid-cols-12 gap-4"
+                  >
+                    <div className="lg:col-span-7 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-900">
+                          Mensaje para charlar solicitud con {userItem.displayName}
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setChatMessageDraft(
+                                `Hola ${userItem.displayName}! Recibí tu solicitud en PastoPro para "${userItem.businessName}". El valor de la licencia única es de $${DEFAULT_SINGLE_LICENSE_CONFIG.singleLicensePriceArs.toLocaleString('es-AR')} ARS (Alias MP: ${DEFAULT_SINGLE_LICENSE_CONFIG.sellerAlias}). En cuanto me pases el comprobante te habilito el permiso en el acto!`
+                              )
+                            }
+                            className="px-2 py-0.5 rounded bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            Pasar Alias MP
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setChatMessageDraft(
+                                `Hola ${userItem.displayName}! Ya te di el permiso de acceso en PastoPro para tu cuenta (${userItem.email}). Ya podés entrar y configurar tu negocio!`
+                              )
+                            }
+                            className="px-2 py-0.5 rounded bg-white border border-slate-200 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+                          >
+                            Confirmar Permiso
+                          </button>
+                        </div>
+                      </div>
+
+                      <textarea
+                        rows={3}
+                        value={chatMessageDraft}
+                        onChange={(e) => setChatMessageDraft(e.target.value)}
+                        className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      />
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          href={buildSafeWhatsAppUrl(
+                            userPhoneDraft || userItem.phone || '5493462551234',
+                            chatMessageDraft
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Enviar por WhatsApp</span>
+                        </a>
+
+                        <a
+                          href={`mailto:${userItem.email}?subject=${encodeURIComponent(
+                            `Solicitud de Acceso PastoPro — ${userItem.businessName}`
+                          )}&body=${encodeURIComponent(chatMessageDraft)}`}
+                          className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold"
+                        >
+                          <span>Enviar por Correo ({userItem.email})</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-5 space-y-2.5 lg:border-l lg:border-slate-200 lg:pl-4">
+                      <span className="text-xs font-bold text-slate-900 block">
+                        Teléfono y Nota Interna del Administrador
+                      </span>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">
+                          WhatsApp del usuario
+                        </label>
+                        <input
+                          type="text"
+                          value={userPhoneDraft}
+                          onChange={(e) => setUserPhoneDraft(e.target.value)}
+                          placeholder="+54 9 341 ..."
+                          className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">
+                          Nota de seguimiento (acuerdos, pago, fecha)
+                        </label>
+                        <input
+                          type="text"
+                          value={adminNoteDraft}
+                          onChange={(e) => setAdminNoteDraft(e.target.value)}
+                          placeholder="Ej. Prometió transferir hoy a la tarde..."
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveUserNotesAndPhone(userItem)}
+                        className="min-h-[32px] w-full inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+                      >
+                        Guardar Teléfono y Nota
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

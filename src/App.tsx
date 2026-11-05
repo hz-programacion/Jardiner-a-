@@ -25,9 +25,11 @@ import {
   FileSpreadsheet,
   FileText,
   History,
+  Leaf,
   LogOut,
   MapPin,
   MessageCircle,
+  Moon,
   Navigation,
   Pause,
   Pencil,
@@ -42,9 +44,15 @@ import {
   Trash2,
   User as UserIcon,
   Users,
+  Volume2,
+  VolumeX,
   Wifi,
   WifiOff,
+  Command,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import {
   BASE_DEPOT,
   INITIAL_EQUIPMENT,
@@ -60,6 +68,7 @@ import {
   ClientProperty,
   EquipmentItem,
   InvoiceRecord,
+  JobPhotoStage,
   OperationalExpense,
   PaymentMethod,
   PaymentProfileConfig,
@@ -67,6 +76,8 @@ import {
   TenantSubscriptionConfig,
 } from './types/lawn';
 import {
+  addTaskAndSurchargeToScheduledJob,
+  appendJobPhotosToClientProperty,
   applyBulkPriceIncrease,
   buildGoogleMapsNavUrl,
   buildSafeWhatsAppUrl,
@@ -78,10 +89,10 @@ import {
   formatStopwatchSeconds,
   generateGoogleSheetsTsv,
   generateSpreadsheetCsv,
-  getClientCutTimeHistory,
   getClientPriceHistory,
   getTodayIsoLocal,
   getWeatherForDate,
+  getWorkOrdersSkeletonDescriptors,
   moveScheduledJobOrder,
   optimizeRouteOrder,
   recalculateJobsFromDynamicBase,
@@ -91,7 +102,14 @@ import {
   updateInvoiceRecordInState,
   updateOperationalExpenseInState,
   updateScheduledJobInState,
+  WorkOrderSkeletonReason,
 } from './utils/lawnLogic';
+import {
+  buildSpokenJobSummary,
+  buildSpokenRouteBriefing,
+  speakTextAloud,
+  stopSpeakingAloud,
+} from './utils/voiceAccessibility';
 import {
   createBlankTenantWorkspace,
   createInitialSubscriptionConfig,
@@ -103,6 +121,7 @@ import {
 } from './utils/saasLogic';
 import { RouteMapPanel } from './components/RouteMapPanel';
 import { CalendarAgendaView } from './components/CalendarAgendaView';
+import { BotanicalAgronomyView } from './components/BotanicalAgronomyView';
 import {
   BackupAndEquipmentView,
   BillingView,
@@ -158,18 +177,25 @@ import {
   PWAInstallButton,
   useServiceWorkerOfflineQueue,
 } from './hooks/usePWAAndOfflineQueue';
+import { CommandPaletteModal } from './components/CommandPaletteModal';
+import { BeforeAfterSlider } from './components/BeforeAfterSlider';
+import {
+  computeAgronomicCuttingWindow,
+  optimizeRouteWith2Opt,
+} from './utils/backendEngine';
 
 type ActiveTab =
   | 'ruta'
   | 'agenda'
   | 'clientes'
+  | 'jardineria'
   | 'cotizador'
   | 'facturacion'
   | 'respaldo'
   | 'admin';
 
 const DEMO_STORAGE_KEY = 'pastopro_demo_workspace_v2';
-const ACTIVE_TENANT_SESSION_KEY = 'pastopro_active_tenant_session_v1';
+const ACTIVE_TENANT_SESSION_KEY = 'pastopro_active_tenant_session_v2';
 const SHEETS_META_KEY = 'pastopro_sheets_meta_v6';
 const LOCAL_MODE_KEY = 'pastopro_local_mode_v1';
 const TODAY_REFERENCE = getTodayIsoLocal();
@@ -194,7 +220,15 @@ const DEFAULT_BUSINESS_PROFILE: BusinessProfileConfig = {
 };
 
 export default function App() {
+  const [adminGardenerPreviewMode, setAdminGardenerPreviewMode] =
+    useState<boolean>(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] =
+    useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('ruta');
+  const [routeLayoutMode, setRouteLayoutMode] = useState<'bento' | 'tabla'>(
+    'bento'
+  );
   const [activeDate, setActiveDate] = useState<string>(TODAY_REFERENCE);
   const [mobileRouteSubView, setMobileRouteSubView] = useState<'list' | 'map'>(
     'list'
@@ -203,12 +237,43 @@ export default function App() {
     'todos' | 'pendientes' | 'completados'
   >('todos');
   const [routeSearchQuery, setRouteSearchQuery] = useState<string>('');
+  const [isDailyJobsTransitioning, setIsDailyJobsTransitioning] =
+    useState<boolean>(false);
+  const [dailyJobsTransitionReason, setDailyJobsTransitionReason] =
+    useState<WorkOrderSkeletonReason>('filter');
+  const [dailyJobsRenderBatch, setDailyJobsRenderBatch] = useState<number>(0);
+  const dailyJobsTransitionTimerRef = useRef<number | null>(null);
+
+  const triggerDailyJobsTransition = useCallback(
+    (reason: WorkOrderSkeletonReason = 'filter', durationMs = 360) => {
+      if (dailyJobsTransitionTimerRef.current !== null) {
+        window.clearTimeout(dailyJobsTransitionTimerRef.current);
+      }
+      setDailyJobsTransitionReason(reason);
+      setIsDailyJobsTransitioning(true);
+      dailyJobsTransitionTimerRef.current = window.setTimeout(() => {
+        setIsDailyJobsTransitioning(false);
+        setDailyJobsRenderBatch((prev) => prev + 1);
+        dailyJobsTransitionTimerRef.current = null;
+      }, Math.max(320, durationMs));
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (dailyJobsTransitionTimerRef.current !== null) {
+        window.clearTimeout(dailyJobsTransitionTimerRef.current);
+      }
+    };
+  }, []);
 
   // Firebase Authentication & Multi-Tenant Session State
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [activeTenantSession, setActiveTenantSession] =
     useState<AuthenticatedTenantSession | null>(() => {
       try {
+        localStorage.removeItem('pastopro_active_tenant_session_v1');
         const raw = localStorage.getItem(ACTIVE_TENANT_SESSION_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
@@ -222,7 +287,6 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [localModeAccepted, setLocalModeAccepted] = useState<boolean>(() => {
     try {
-      // Remove legacy permanent local-mode bypass so unauthenticated launches show Login
       localStorage.removeItem(LOCAL_MODE_KEY);
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
@@ -250,6 +314,56 @@ export default function App() {
     () => getTenantStorageKey(activeTenantUid, !activeTenantUid),
     [activeTenantUid]
   );
+
+  // Dark Mode State (persisted in localStorage)
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('parquizaciones_dark_mode_v1') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      document.documentElement.classList.toggle('dark', isDarkMode);
+      localStorage.setItem('parquizaciones_dark_mode_v1', String(isDarkMode));
+    } catch {
+      // ignore
+    }
+  }, [isDarkMode]);
+
+  // Optional Voice & Pictogram Accessibility Mode (OFF by default, user-activated only)
+  const [isEasyAccessMode, setIsEasyAccessMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('parquizaciones_easy_access_v1') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isSpeakingAudio, setIsSpeakingAudio] = useState<boolean>(false);
+
+  const handleToggleEasyAccessMode = useCallback(() => {
+    setIsEasyAccessMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('parquizaciones_easy_access_v1', String(next));
+      } catch {
+        // ignore
+      }
+      if (!next) {
+        stopSpeakingAloud();
+        setIsSpeakingAudio(false);
+      } else {
+        setIsSpeakingAudio(true);
+        speakTextAloud(
+          'Modo fácil con voz activado. Tocá cualquier botón amarillo con parlante para escuchar los datos en voz alta.',
+          () => setIsSpeakingAudio(false)
+        );
+      }
+      return next;
+    });
+  }, []);
 
   // White-Label & SaaS Subscription Modal states
   const [isWhiteLabelModalOpen, setIsWhiteLabelModalOpen] = useState(false);
@@ -606,6 +720,9 @@ export default function App() {
         hasHydratedFromCloudRef.current = session.uid;
         setCloudSyncState('synced');
         setCloudSyncMessage('Espacio privado sincronizado en la nube.');
+        if (isPrimaryAdminEmail(session.email)) {
+          setActiveTab('admin');
+        }
         return;
       }
 
@@ -655,6 +772,9 @@ export default function App() {
           hasHydratedFromCloudRef.current = session.uid;
           setCloudSyncState('synced');
           setCloudSyncMessage(`Cuenta aislada activa (${session.email}).`);
+          if (isPrimaryAdminEmail(session.email)) {
+            setActiveTab('admin');
+          }
           return;
         }
       } catch {
@@ -669,7 +789,6 @@ export default function App() {
         displayName: session.displayName,
         businessName: session.businessName,
         cityPresetKey: session.cityPresetKey,
-        customCityInput: session.customCityInput,
       });
 
       const newSession: AuthenticatedTenantSession = {
@@ -688,26 +807,47 @@ export default function App() {
         // ignore
       }
 
+      const isAdminAccount = isPrimaryAdminEmail(session.email);
+      const initialProperties = isAdminAccount ? INITIAL_PROPERTIES : blank.properties;
+      const initialJobs = isAdminAccount
+        ? recalculateJobsFromDynamicBase(
+            blank.baseLocation.coordinates,
+            INITIAL_TODAY_JOBS
+          )
+        : blank.todayJobs;
+      const initialInvoices = isAdminAccount ? INITIAL_INVOICES : blank.invoices;
+      const initialExpenses = isAdminAccount ? INITIAL_EXPENSES : blank.expenses;
+      const initialEquipment = isAdminAccount ? INITIAL_EQUIPMENT : blank.equipment;
+
       setBusinessProfile(blank.businessProfile);
       setBaseLocation(blank.baseLocation);
       setPaymentProfile(blank.paymentProfile);
       setSubscription(blank.subscription);
-      setProperties(blank.properties);
-      setScheduledJobs(blank.todayJobs);
-      setInvoices(blank.invoices);
-      setExpenses(blank.expenses);
-      setEquipment(blank.equipment);
-      setSelectedJobId(null);
+      setProperties(initialProperties);
+      setScheduledJobs(initialJobs);
+      setInvoices(initialInvoices);
+      setExpenses(initialExpenses);
+      setEquipment(initialEquipment);
+      setSelectedJobId(initialJobs[0]?.id || null);
+
+      const workspacePayload = {
+        ...blank,
+        properties: initialProperties,
+        todayJobs: initialJobs,
+        invoices: initialInvoices,
+        expenses: initialExpenses,
+        equipment: initialEquipment,
+      };
 
       try {
-        localStorage.setItem(tenantKey, JSON.stringify(blank));
+        localStorage.setItem(tenantKey, JSON.stringify(workspacePayload));
       } catch {
         // ignore
       }
 
       hasHydratedFromCloudRef.current = session.uid;
       const saved = await saveWorkspaceToFirestore(session.uid, {
-        ...blank,
+        ...workspacePayload,
         ownerEmail: session.email,
       });
       setCloudSyncState(saved.ok ? 'synced' : 'idle');
@@ -717,8 +857,9 @@ export default function App() {
           : `Espacio privado inicializado para ${blank.businessProfile.appName} (${blank.baseLocation.city}).`
       );
 
-      // Only open White-Label wizard automatically if the account is already approved (e.g. Admin)
-      if (initialApproval.isApproved) {
+      if (isAdminAccount) {
+        setActiveTab('admin');
+      } else if (initialApproval.isApproved) {
         setIsFirstTimeWhiteLabelSetup(true);
         setIsWhiteLabelModalOpen(true);
       }
@@ -945,10 +1086,16 @@ export default function App() {
     }
   };
 
-  // Close active modal when pressing Escape
+  // Close active modal when pressing Escape & toggle Command Palette with Cmd+K / Ctrl+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
       if (e.key === 'Escape') {
+        setIsCommandPaletteOpen(false);
         setIsAuthModalOpen(false);
         setIsBaseModalOpen(false);
         setIsBusinessProfileModalOpen(false);
@@ -1026,6 +1173,7 @@ export default function App() {
   }, [connectedSpreadsheetId, connectedSpreadsheetUrl, lastSyncedAt]);
 
   const handleUpdateBaseLocation = (newBase: BaseLocationConfig) => {
+    triggerDailyJobsTransition('reload', 280);
     setBaseLocation(newBase);
     setScheduledJobs((prev) =>
       recalculateJobsFromDynamicBase(newBase.coordinates, prev)
@@ -1075,6 +1223,7 @@ export default function App() {
     const base = new Date(`${activeDate}T12:00:00Z`);
     if (Number.isNaN(base.getTime())) return;
     base.setUTCDate(base.getUTCDate() + daysDelta);
+    triggerDailyJobsTransition('date', 280);
     setActiveDate(base.toISOString().slice(0, 10));
   };
 
@@ -1231,18 +1380,62 @@ export default function App() {
     };
   }, [activeDateJobs]);
 
-  const handleOptimizeRoute = () => {
-    const result = optimizeRouteOrder(baseLocation.coordinates, activeDateJobs);
+  const agronomicAdvisory = useMemo(
+    () =>
+      computeAgronomicCuttingWindow(
+        activeDate,
+        baseLocation.city,
+        activeDayWeather.tempMax,
+        activeDayWeather.condition
+      ),
+    [
+      activeDate,
+      baseLocation.city,
+      activeDayWeather.tempMax,
+      activeDayWeather.condition,
+    ]
+  );
+
+  const handleOptimizeRoute = async () => {
+    triggerDailyJobsTransition('optimize', 300);
+    let result = optimizeRouteWith2Opt(
+      baseLocation.coordinates,
+      activeDateJobs
+    );
+    try {
+      const response = await fetch('/api/route/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseCoords: baseLocation.coordinates,
+          jobs: activeDateJobs,
+        }),
+      });
+      if (response.ok) {
+        const apiData = await response.json();
+        if (apiData?.ok && Array.isArray(apiData.optimizedJobs)) {
+          result = apiData;
+        }
+      }
+    } catch {
+      // Fallback transparently to local 2-Opt solver when offline
+    }
+
     setScheduledJobs((prev) => {
       const otherDays = prev.filter((j) => j.scheduledDate !== activeDate);
-      return [...otherDays, ...result.orderedJobs];
+      return [...otherDays, ...result.optimizedJobs];
     });
+    const savingsNote =
+      result.distanceSavedKm > 0
+        ? ` · Ahorro 2-Opt: ${result.distanceSavedKm} km (${result.estimatedMinutesSaved} min · ${result.fuelSavedMl} ml mezcla)`
+        : '';
     showBanner(
-      `Ruta del ${activeDate} optimizada desde ${baseLocation.city}: ${result.orderedJobs.length} paradas (${result.totalDistanceKm} km estimados).`
+      `Ruta 2-Opt optimizada desde ${baseLocation.city}: ${result.optimizedJobs.length} paradas (${result.optimizedDistanceKm} km estimados${savingsNote}).`
     );
   };
 
   const handleRainDelayForDate = (targetDateStr = activeDate) => {
+    triggerDailyJobsTransition('reload', 280);
     setScheduledJobs((prev) =>
       reschedulePendingJobsForRain(prev, 1, targetDateStr)
     );
@@ -1396,7 +1589,10 @@ export default function App() {
     finalPrice: number,
     updateClientBasePrice: boolean,
     photoUrl?: string,
-    actualDurationMinutes?: number
+    actualDurationMinutes?: number,
+    customNextVisitDate?: string | null,
+    beforePhotos?: string[],
+    afterPhotos?: string[]
   ) => {
     const targetJob = scheduledJobs.find((j) => j.id === jobId);
     if (!targetJob) return;
@@ -1412,6 +1608,8 @@ export default function App() {
       ...targetJob,
       price: finalPrice,
       photoUrl: photoUrl || targetJob.photoUrl,
+      beforePhotos: beforePhotos ?? targetJob.beforePhotos,
+      afterPhotos: afterPhotos ?? targetJob.afterPhotos,
       actualDurationMinutes: resolvedDuration,
     };
     const sequenceNumber = invoices.length + 1;
@@ -1422,8 +1620,15 @@ export default function App() {
       targetJob.scheduledDate,
       sequenceNumber,
       photoUrl,
-      resolvedDuration
+      resolvedDuration,
+      beforePhotos,
+      afterPhotos
     );
+
+    if (customNextVisitDate !== undefined) {
+      invoice.nextScheduledDate =
+        customNextVisitDate || 'Servicio puntual / A coordinar';
+    }
 
     setScheduledJobs((prev) =>
       prev.map((j) => (j.id === jobId ? updatedJob : j))
@@ -1431,38 +1636,87 @@ export default function App() {
     setInvoices((prev) => [invoice, ...prev]);
 
     setProperties((prev) =>
-      prev.map((prop) =>
-        prop.id === targetJob.propertyId
-          ? {
-              ...prop,
-              basePrice: updateClientBasePrice ? finalPrice : prop.basePrice,
-              lastCutDate: targetJob.scheduledDate,
-              nextCutDate: invoice.nextScheduledDate,
-            }
-          : prop
-      )
+      prev.map((prop) => {
+        if (prop.id !== targetJob.propertyId) return prop;
+        const baseUpdated: ClientProperty = {
+          ...prop,
+          basePrice: updateClientBasePrice ? finalPrice : prop.basePrice,
+          lastCutDate: targetJob.scheduledDate,
+          nextCutDate: invoice.nextScheduledDate,
+        };
+        return appendJobPhotosToClientProperty(
+          baseUpdated,
+          invoice,
+          beforePhotos || [],
+          afterPhotos || []
+        );
+      })
     );
 
     if (activeCutTimer?.jobId === jobId) {
       setActiveCutTimer(null);
     }
 
+    const totalSavedPhotos =
+      (beforePhotos?.length || 0) + (afterPhotos?.length || 0);
+
     const { queuedOffline } = recordAction(
       'COMPLETE_JOB',
       `Corte completado: ${targetJob.clientName}`,
-      `${invoice.invoiceNumber} · $${finalPrice.toLocaleString('es-AR')} · ${resolvedDuration} min (${
-        paidNow ? paymentMethod : 'Cuenta Cte.'
-      })`
+      `${invoice.invoiceNumber} · $${finalPrice.toLocaleString('es-AR')} · ${resolvedDuration} min${
+        totalSavedPhotos > 0 ? ` · ${totalSavedPhotos} fotos Antes/Después` : ''
+      } (${paidNow ? paymentMethod : 'Cuenta Cte.'})`
     );
 
     setJobToComplete(null);
     setSelectedInvoiceReceipt(invoice);
     showBanner(
-      `Corte finalizado en ${targetJob.clientName} (${resolvedDuration} min). Recibo ${invoice.invoiceNumber} emitido por $${finalPrice.toLocaleString('es-AR')}.${
+      `Corte finalizado en ${targetJob.clientName} (${resolvedDuration} min${
+        totalSavedPhotos > 0 ? `, ${totalSavedPhotos} fotos guardadas en ficha y facturación` : ''
+      }). Recibo ${invoice.invoiceNumber} emitido por $${finalPrice.toLocaleString('es-AR')}.${
         queuedOffline
           ? ' Guardado en cola offline para sincronizar al recuperar señal.'
           : ''
       }`
+    );
+  };
+
+  const handleAddClientPhotos = (
+    propertyId: string,
+    stage: JobPhotoStage,
+    photoUrls: string[]
+  ) => {
+    if (!photoUrls || photoUrls.length === 0) return;
+    setProperties((prev) =>
+      prev.map((prop) => {
+        if (prop.id !== propertyId) return prop;
+        const newItems = photoUrls.map((url, idx) => ({
+          id: `ph-manual-${propertyId}-${stage}-${Date.now()}-${idx}`,
+          stage,
+          url,
+          caption: `${stage === 'antes' ? 'Antes' : 'Después'} · ${prop.clientName}`,
+          takenAt: activeDate,
+          propertyId: prop.id,
+          clientName: prop.clientName,
+          address: prop.address,
+          neighborhood: prop.neighborhood,
+          areaSqm: prop.areaSqm,
+          amount: prop.basePrice,
+        }));
+        const updatedProp: ClientProperty = {
+          ...prop,
+          photoGallery: [...newItems, ...(prop.photoGallery || [])],
+        };
+        if (historyClientModal?.id === propertyId) {
+          setHistoryClientModal(updatedProp);
+        }
+        return updatedProp;
+      })
+    );
+    showBanner(
+      `${photoUrls.length} ${photoUrls.length === 1 ? 'foto agregada' : 'fotos agregadas'} (${
+        stage === 'antes' ? 'Antes' : 'Después'
+      }) en la ficha del cliente.`
     );
   };
 
@@ -1885,6 +2139,7 @@ export default function App() {
   };
 
   const handleRestoreDemoData = () => {
+    triggerDailyJobsTransition('reload', 300);
     setBaseLocation(BASE_DEPOT);
     setProperties(INITIAL_PROPERTIES);
     setScheduledJobs(
@@ -1895,6 +2150,23 @@ export default function App() {
     setEquipment(INITIAL_EQUIPMENT);
     setActiveDate(TODAY_REFERENCE);
     showBanner('Datos de demostración restaurados.');
+  };
+
+  const handleReloadDailyRouteData = () => {
+    triggerDailyJobsTransition('reload', 280);
+    setScheduledJobs((prev) =>
+      recalculateJobsFromDynamicBase(baseLocation.coordinates, prev)
+    );
+  };
+
+  const handleAddTaskToJob = (
+    jobId: string,
+    taskText: string,
+    extraAmountArs: number
+  ) => {
+    setScheduledJobs((prev) =>
+      addTaskAndSurchargeToScheduledJob(prev, jobId, taskText, extraAmountArs)
+    );
   };
 
   const fullRouteGoogleMapsUrl = useMemo(() => {
@@ -1934,6 +2206,19 @@ export default function App() {
     });
   }, [activeDateJobs, routeStatusFilter, routeSearchQuery]);
 
+  const dailyJobsSkeletonState = useMemo(
+    () =>
+      getWorkOrdersSkeletonDescriptors(
+        filteredActiveDateJobs.length || activeDateJobs.length || 3,
+        dailyJobsTransitionReason
+      ),
+    [
+      filteredActiveDateJobs.length,
+      activeDateJobs.length,
+      dailyJobsTransitionReason,
+    ]
+  );
+
   const completionRatio =
     activeDateJobs.length > 0
       ? Math.round((routeMetrics.completedCount / activeDateJobs.length) * 100)
@@ -1964,12 +2249,45 @@ export default function App() {
     return false;
   }, [localModeAccepted, activeTenantSession, firebaseUser, activeTenantUid]);
 
-  // 1. If user is not authenticated and hasn't explicitly entered Demo Mode in this session, show the Login Gate
-  if (!firebaseUser && !activeTenantSession && !localModeAccepted) {
+  const handleTilePointerMove = (e: React.MouseEvent<HTMLElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.style.setProperty('--spot-x', `${e.clientX - rect.left}px`);
+    e.currentTarget.style.setProperty('--spot-y', `${e.clientY - rect.top}px`);
+  };
+
+  // Pick a featured Before/After pair from invoices or properties for the live Bento showcase tile
+  const featuredBeforeAfter = useMemo(() => {
+    for (const inv of invoices) {
+      if (inv.beforePhotos?.length && inv.afterPhotos?.length) {
+        return {
+          beforeUrl: inv.beforePhotos[0],
+          afterUrl: inv.afterPhotos[0],
+          clientName: inv.clientName,
+          dateStr: inv.date,
+        };
+      }
+    }
+    return {
+      beforeUrl:
+        'https://images.unsplash.com/photo-1558904541-efa843a96f01?auto=format&fit=crop&w=900&q=80',
+      afterUrl:
+        'https://images.unsplash.com/photo-1592417817098-8f3d691a4bf5?auto=format&fit=crop&w=900&q=80',
+      clientName: 'Quinta Los Aromos · Corte y Desmalezado',
+      dateStr: activeDate,
+    };
+  }, [invoices, activeDate]);
+
+  // 1. Show the Login Gate whenever there is no active authenticated session or active Demo session.
+  // Once logged in, the user stays inside the app until they click "Cerrar Sesión" from inside the app.
+  const isWorkspaceUnlocked = Boolean(
+    firebaseUser || activeTenantSession || localModeAccepted
+  );
+
+  if (!isWorkspaceUnlocked) {
     return (
       <AuthGate
-        currentUser={null}
-        activeTenantSession={null}
+        currentUser={firebaseUser}
+        activeTenantSession={activeTenantSession}
         isModalOpen={true}
         isFullScreenGate={true}
         appName={businessProfile.appName}
@@ -1978,7 +2296,6 @@ export default function App() {
         cloudSyncMessage={cloudSyncMessage}
         onCloseModal={() => {}}
         onContinueLocalMode={() => {
-          // Load Demo workspace explicitly without persisting permanent auth bypass
           setBusinessProfile(DEFAULT_BUSINESS_PROFILE);
           setBaseLocation(BASE_DEPOT);
           setPaymentProfile(DEFAULT_PAYMENT_PROFILE);
@@ -1994,7 +2311,13 @@ export default function App() {
           setEquipment(INITIAL_EQUIPMENT);
           setLocalModeAccepted(true);
         }}
-        onTenantAuthenticated={hydrateTenantWorkspace}
+        onTenantAuthenticated={async (session) => {
+          await hydrateTenantWorkspace(session);
+          setLocalModeAccepted(true);
+          if (isPrimaryAdminEmail(session.email)) {
+            setActiveTab('admin');
+          }
+        }}
         onLogoutSession={handleFullLogout}
         onOpenWhiteLabelWizard={() => {
           setIsFirstTimeWhiteLabelSetup(false);
@@ -2033,252 +2356,377 @@ export default function App() {
     );
   }
 
+  const activeSectionMeta = (() => {
+    switch (activeTab) {
+      case 'ruta':
+        return {
+          category: 'Operaciones de Campo',
+          title: 'Hoja de Ruta GPS y Despacho',
+        };
+      case 'agenda':
+        return {
+          category: 'Planificación Operativa',
+          title: 'Agenda y Calendario',
+        };
+      case 'clientes':
+        return {
+          category: 'CRM y Propiedades',
+          title: 'Cartera de Clientes y Lotes',
+        };
+      case 'jardineria':
+        return {
+          category: 'Agronomía y Terreno',
+          title: 'Manual de Césped y Servicios Extra',
+        };
+      case 'facturacion':
+        return {
+          category: 'Finanzas y Tesorería',
+          title: 'Flujo de Caja, Cobros y Recibos',
+        };
+      case 'cotizador':
+        return {
+          category: 'Ingeniería Comercial',
+          title: 'Cotizador Técnico por Superficie',
+        };
+      case 'respaldo':
+        return {
+          category: 'Activos y Sincronización',
+          title: 'Flota de Equipos y Google Sheets',
+        };
+      case 'admin':
+        return {
+          category: 'Gobierno de Plataforma',
+          title: 'Consola de Licencias y Aprobaciones',
+        };
+      default:
+        return {
+          category: 'Operaciones',
+          title: businessProfile.appName,
+        };
+    }
+  })();
+
   return (
-    <div className="min-h-screen bg-[#F3F6F5] text-zinc-900 flex flex-col pb-20 md:pb-10">
+    <div className="min-h-screen architectural-grid-canvas text-slate-900 flex flex-col pb-20 md:pb-6 overflow-x-hidden">
       {/* Skip-to-Content Link */}
       <a
         href="#main-workspace"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2.5 focus:rounded-xl focus:bg-zinc-950 focus:text-white focus:font-bold focus:text-sm focus:shadow-lg"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2.5 focus:rounded-xl focus:bg-slate-900 focus:text-white focus:font-bold focus:text-sm focus:shadow-lg"
       >
         Saltar al contenido principal
       </a>
 
-      {/* Top Bar — Architectural Command Header */}
-      <header className="sticky top-0 z-30 min-h-14 md:min-h-16 bg-[#0B1D16] text-white border-b border-emerald-950 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-3 shadow-sm">
-        {/* Zone 1: Minimalist Brand Wordmark + Custom Uploaded Logo */}
-        <a
-          href="#ruta"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('ruta');
-          }}
-          title="Ir a Hoy / Ruta"
-          className="flex items-center gap-2.5 font-display text-base sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+      {/* ====================================================================
+          TWO-TIER ARCHITECTURAL HEADER & MODULE NAVIGATION
+          Row 1: Brand, City, Admin Quick-Switch, Actions & Visible Logout (Zero Overflow)
+          Row 2: Dedicated Module Navigation Bar across all screen widths
+          ==================================================================== */}
+      <div className="sticky top-0 z-30 select-none bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-[0_1px_3px_rgba(15,23,42,0.03)]">
+        {/* TIER 1: EXECUTIVE IDENTITY, ADMIN ACCESS & ACCOUNT BAR */}
+        <header
+          aria-label="Cabecera y Navegación Principal de PastoPro"
+          className="max-w-[1600px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2 min-w-0"
         >
-          {businessProfile.logoUrl ? (
-            <img
-              src={businessProfile.logoUrl}
-              alt={businessProfile.appName}
-              className="w-7 h-7 rounded-lg object-cover border border-white/20 shrink-0"
-            />
-          ) : (
-            <span
-              style={{
-                backgroundColor: businessProfile.brandColor || '#14B8A6',
+          {/* ZONE 1 (LEFT): Brand Identity + Active City + Admin Role Badge */}
+          <div className="flex items-center gap-2 shrink-0 min-w-0">
+            <a
+              href="#ruta"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveTab(isAdminUser ? 'admin' : 'ruta');
               }}
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-            />
-          )}
-          <span className="truncate max-w-[160px] sm:max-w-[240px]">
-            {businessProfile.appName}
-          </span>
-        </a>
+              className="flex items-center gap-2 shrink-0 group"
+            >
+              {businessProfile.logoUrl ? (
+                <img
+                  src={businessProfile.logoUrl}
+                  alt={businessProfile.appName}
+                  className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-white shrink-0 shadow-2xs">
+                  <Leaf className="w-4 h-4 text-emerald-400" />
+                </div>
+              )}
+              <span className="font-display font-bold text-sm sm:text-base tracking-tight text-slate-900 truncate max-w-[96px] sm:max-w-[160px]">
+                {businessProfile.appName === 'Consola Central de Licencias'
+                  ? 'PastoPro'
+                  : businessProfile.appName}
+              </span>
+            </a>
 
-        {/* Zone 2: Clean Typographic Navigation Links */}
+            <button
+              type="button"
+              onClick={() => setIsBaseModalOpen(true)}
+              title={`Punto de partida: ${baseLocation.city}`}
+              className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-xs text-slate-700 font-medium transition-colors cursor-pointer max-w-[140px]"
+            >
+              <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">{baseLocation.city.split(',')[0]}</span>
+            </button>
+
+            {isAdminUser && (
+              <span className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[10px] font-bold uppercase tracking-wider text-emerald-800 shrink-0">
+                <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                Administrador
+              </span>
+            )}
+          </div>
+
+          {/* ZONE 2 (RIGHT): Global Actions + Admin Access Control + Always-Visible Logout */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            {isAdminUser && (
+              <button
+                type="button"
+                data-testid="nav-admin-panel-btn"
+                onClick={() => setActiveTab('admin')}
+                title="Controlar solicitudes de acceso, dar permisos y chatear con usuarios"
+                className={`min-h-[34px] inline-flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 border ${
+                  activeTab === 'admin'
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-200'
+                }`}
+              >
+                <ShieldCheck
+                  className={`w-3.5 h-3.5 shrink-0 ${
+                    activeTab === 'admin' ? 'text-white' : 'text-emerald-600'
+                  }`}
+                />
+                <span className="hidden md:inline">Control de Accesos</span>
+                <span className="md:hidden">Accesos</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              data-testid="open-command-palette-btn"
+              onClick={() => setIsCommandPaletteOpen(true)}
+              title="Buscador rápido (⌘K)"
+              className="hidden sm:inline-flex min-h-[34px] px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-xs text-slate-700 items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span className="hidden xl:inline font-medium">Buscar</span>
+              <kbd className="hidden lg:inline px-1 py-0.5 rounded bg-white border border-slate-200 text-[10px] font-mono font-semibold text-slate-500">
+                ⌘K
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEditingClient(null);
+                setPrefillClientData(null);
+                setModalDefaultDate(activeDate);
+                setModalDefaultTime('08:30');
+                setIsClientModalOpen(true);
+              }}
+              title="Programar nuevo corte o registrar cliente"
+              className="min-h-[34px] inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs shadow-2xs cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-400 stroke-[2.5] shrink-0" />
+              <span className="hidden sm:inline">Nuevo</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsFirstTimeWhiteLabelSetup(false);
+                setIsWhiteLabelModalOpen(true);
+              }}
+              data-testid="open-whitelabel-btn"
+              title="Personalizar marca, ciudad, tarifa $/m² y alias"
+              className="hidden sm:inline-flex min-h-[34px] items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs text-slate-700 font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Building2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="hidden lg:inline">Mi Negocio</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsAuthModalOpen(true)}
+              data-testid="open-firebase-auth-btn"
+              title="Cuenta y sincronización"
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 transition-colors cursor-pointer shrink-0"
+            >
+              <UserIcon className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+              <span className="hidden xl:inline">Cuenta</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleFullLogout}
+              data-testid="logout-btn"
+              title="Cerrar sesión activa y volver al inicio de sesión"
+              className="min-h-[34px] px-2.5 sm:px-3 py-1.5 rounded-lg bg-rose-50/70 hover:bg-rose-100 text-rose-700 border border-rose-200 inline-flex items-center justify-center gap-1.5 text-xs font-bold transition-colors cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span>Salir</span>
+            </button>
+          </div>
+        </header>
+
+        {/* TIER 2: DEDICATED MODULE NAVIGATION BAR (All Screen Sizes — Clean & Never Clipped) */}
         <nav
-          aria-label="Navegación principal"
-          className="hidden md:flex items-center gap-2 lg:gap-4 text-xs lg:text-sm font-medium"
+          aria-label="Módulos principales"
+          className="max-w-[1600px] mx-auto flex items-center gap-1 px-3 sm:px-6 h-11 bg-slate-50/90 border-t border-slate-200/80 overflow-x-auto no-scrollbar"
         >
-          <button
-            type="button"
-            onClick={() => setActiveTab('ruta')}
-            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'ruta'
-                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
-                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Hoy / Ruta
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('agenda')}
-            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'agenda'
-                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
-                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Agenda
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('clientes')}
-            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
-              activeTab === 'clientes'
-                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
-                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Clientes
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('facturacion')}
-            className={`min-h-[36px] px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
-              isMoreSectionActive
-                ? 'bg-teal-500/20 text-teal-300 font-semibold border border-teal-400/30'
-                : 'text-emerald-100/75 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Mi Plata
-          </button>
-
           {isAdminUser && (
             <button
               type="button"
+              data-testid="sidebar-nav-admin"
               onClick={() => setActiveTab('admin')}
-              data-testid="nav-admin-panel-btn"
-              className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 ${
+              className={`min-h-[32px] inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 activeTab === 'admin'
-                  ? 'bg-teal-400 text-[#0B1D16] font-bold'
-                  : 'bg-white/10 text-teal-300 hover:bg-white/15 border border-teal-400/30'
+                  ? 'bg-slate-900 text-white font-semibold shadow-2xs'
+                  : 'bg-emerald-50/80 text-emerald-900 hover:bg-emerald-100 font-semibold border border-emerald-200/80'
               }`}
             >
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-              <span>Panel Admin</span>
+              <ShieldCheck
+                className={`w-3.5 h-3.5 shrink-0 ${
+                  activeTab === 'admin' ? 'text-emerald-400' : 'text-emerald-600'
+                }`}
+              />
+              <span>Solicitudes y Accesos</span>
+              <span
+                className={`text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded ${
+                  activeTab === 'admin'
+                    ? 'bg-emerald-500/25 text-emerald-300 font-bold'
+                    : 'bg-emerald-200/70 text-emerald-900 font-bold'
+                }`}
+              >
+                Admin
+              </span>
             </button>
           )}
+
+          {(
+            [
+              {
+                id: 'ruta',
+                label: 'Hoy / Ruta',
+                icon: Compass,
+                count: `${routeMetrics.completedCount}/${activeDateJobs.length}`,
+              },
+              {
+                id: 'agenda',
+                label: 'Agenda',
+                icon: CalendarIcon,
+                count: null,
+              },
+              {
+                id: 'clientes',
+                label: 'Clientes',
+                icon: Users,
+                count: String(properties.length),
+              },
+              {
+                id: 'cotizador',
+                label: 'Cotizador',
+                icon: Calculator,
+                count: null,
+              },
+              {
+                id: 'facturacion',
+                label: 'Finanzas',
+                icon: BarChart3,
+                count: null,
+              },
+              {
+                id: 'respaldo',
+                label: 'Equipos',
+                icon: FileSpreadsheet,
+                count: null,
+              },
+            ] as const
+          ).map((item) => {
+            const IconComponent = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-testid={`sidebar-nav-${item.id}`}
+                onClick={() => setActiveTab(item.id)}
+                className={`min-h-[32px] inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  isActive
+                    ? 'bg-slate-900 text-white font-semibold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white font-medium'
+                }`}
+              >
+                <IconComponent
+                  className={`w-3.5 h-3.5 shrink-0 ${
+                    isActive ? 'text-emerald-400' : 'text-slate-500'
+                  }`}
+                />
+                <span>{item.label}</span>
+                {item.count && (
+                  <span
+                    className={`text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded ${
+                      isActive
+                        ? 'bg-white/15 text-white font-bold'
+                        : 'bg-slate-200/80 text-slate-700'
+                    }`}
+                  >
+                    {item.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
+      </div>
 
-        {/* Zone 3: Primary Action CTA + Commercial/Account Controls + Cerrar Sesión */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {isAdminUser && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('admin')}
-              className="md:hidden min-h-[34px] inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-teal-400 text-[#0B1D16] whitespace-nowrap shrink-0"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-              <span>Admin</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsFirstTimeWhiteLabelSetup(false);
-              setIsWhiteLabelModalOpen(true);
-            }}
-            data-testid="open-whitelabel-btn"
-            title="Configurar marca propia, logo, ciudad y precios"
-            className="hidden lg:inline-flex min-h-[36px] items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-teal-300 shrink-0" />
-            <span>Mi Marca</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsSubscriptionModalOpen(true)}
-            data-testid="open-subscription-btn"
-            title="Licencia Comercial de Pago Único"
-            className="min-h-[36px] inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
-          >
-            <CreditCard className="w-3.5 h-3.5 text-teal-300 shrink-0" />
-            <span className="hidden sm:inline">
-              {subscriptionEval.badgeText}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsAuthModalOpen(true)}
-            data-testid="open-firebase-auth-btn"
-            title="Ver estado de cuenta y respaldo en la nube"
-            className="hidden sm:inline-flex min-h-[36px] items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-white/10 text-emerald-100 hover:bg-white/15 transition-colors whitespace-nowrap shrink-0"
-          >
-            <UserIcon className="w-3.5 h-3.5 text-teal-300 shrink-0" />
-            <span className="truncate max-w-[110px]">
-              {activeTenantSession?.email ||
-                firebaseUser?.email ||
-                'Cuenta'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setEditingClient(null);
-              setPrefillClientData(null);
-              setModalDefaultDate(activeDate);
-              setModalDefaultTime('08:30');
-              setIsClientModalOpen(true);
-            }}
-            className="min-h-[36px] px-3 sm:px-3.5 py-1.5 text-xs font-bold text-[#0B1D16] bg-teal-400 rounded-xl hover:bg-teal-300 active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
-          >
-            + Nuevo Corte
-          </button>
-
-          <button
-            type="button"
-            onClick={handleFullLogout}
-            data-testid="logout-btn"
-            title="Cerrar sesión y volver a la pantalla de acceso"
-            className="min-h-[36px] inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:text-white bg-white/10 hover:bg-red-600/80 rounded-xl transition-colors whitespace-nowrap shrink-0"
-          >
-            <LogOut className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Salir</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main Content Container */}
-      <main
-        id="main-workspace"
-        className="flex-1 max-w-[1400px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4"
-      >
-
+      {/* ====================================================================
+          MAIN WORKSPACE (Calm, Uncluttered Responsive Canvas)
+          ==================================================================== */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <main
+          id="main-workspace"
+          className="flex-1 min-w-0 max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-5 space-y-5"
+        >
         {routeNotice && (
           <div
             role="status"
             aria-live="polite"
-            className="surface-command text-white text-xs sm:text-sm font-medium px-4 py-3 rounded-xl flex items-center justify-between gap-3"
+            className="bg-emerald-50 text-slate-900 text-xs sm:text-sm font-medium px-4 py-3 rounded-xl border border-emerald-200 flex items-center justify-between gap-3 shadow-2xs"
           >
             <span className="break-words min-w-0">{routeNotice}</span>
             <button
               type="button"
               onClick={() => setRouteNotice(null)}
-              className="text-zinc-300 hover:text-white text-xs font-semibold underline shrink-0"
+              className="text-emerald-700 hover:text-slate-950 text-xs font-semibold underline shrink-0 cursor-pointer"
             >
               Cerrar
             </button>
           </div>
         )}
 
-        {/* Cronómetro de Corte en Vivo (Flotante cuando se está cortando un lote) */}
+        {/* Cronómetro de Corte en Vivo */}
         {activeCutTimer && (
           <div
             data-testid="active-cut-timer-banner"
-            className="bg-[#0B1D16] text-white border border-teal-500/40 rounded-2xl p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 shadow-md"
+            className="bg-white text-slate-900 border border-slate-300 rounded-xl p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span
-                className={`w-3 h-3 rounded-full shrink-0 ${
-                  activeCutTimer.isRunning
-                    ? 'bg-teal-400 animate-pulse'
-                    : 'bg-amber-400'
-                }`}
-              />
+              <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+                <Timer className="w-4 h-4 text-emerald-600" />
+              </div>
               <div className="min-w-0">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-teal-300">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-600 font-bold">
                   {activeCutTimer.isRunning
-                    ? 'Cronómetro de Corte en Curso'
-                    : 'Cronómetro en Pausa'}
+                    ? 'SERVICIO EN CURSO'
+                    : 'CRONÓMETRO EN PAUSA'}
                 </div>
-                <div className="text-sm font-bold text-white truncate">
+                <div className="text-sm font-bold text-slate-900 truncate">
                   {activeCutTimer.clientName}
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <div
                 data-testid="active-cut-timer-display"
-                className="font-mono text-xl sm:text-2xl font-bold text-teal-300 tabular-nums px-3 py-1 rounded-xl bg-white/10 border border-white/10"
+                className="font-mono text-base sm:text-lg font-bold text-slate-900 tabular-nums px-3 py-1 rounded-lg bg-slate-100 border border-slate-200"
               >
                 {formatStopwatchSeconds(activeCutTimer.elapsedSeconds)}
               </div>
@@ -2291,7 +2739,7 @@ export default function App() {
                     prev ? { ...prev, isRunning: !prev.isRunning } : null
                   )
                 }
-                className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
+                className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors cursor-pointer"
               >
                 {activeCutTimer.isRunning ? (
                   <>
@@ -2320,253 +2768,181 @@ export default function App() {
                     setJobToComplete(job);
                   }
                 }}
-                className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-[#0B1D16] bg-teal-400 hover:bg-teal-300 rounded-xl transition-colors"
+                className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors cursor-pointer"
               >
-                <Check className="w-3.5 h-3.5" />
-                <span>
-                  Terminar y Guardar (
-                  {Math.max(1, Math.round(activeCutTimer.elapsedSeconds / 60))}{' '}
-                  min)
-                </span>
+                <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[2.5]" />
+                <span>Finalizar y Cobrar</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* Sub-navegación de "Mi Plata" */}
-        {isMoreSectionActive && (
-          <section
-            aria-label="Secciones de Mi Plata y Herramientas"
-            className="surface-card rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setActiveTab('facturacion')}
-                className={`min-h-[38px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
-                  activeTab === 'facturacion'
-                    ? 'bg-zinc-950 text-white'
-                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span>Mi Plata (Cobros y Gastos)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('cotizador')}
-                className={`min-h-[38px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
-                  activeTab === 'cotizador'
-                    ? 'bg-zinc-950 text-white'
-                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                }`}
-              >
-                <Calculator className="w-4 h-4" />
-                <span>Cotizador de Lotes</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('respaldo')}
-                className={`min-h-[38px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
-                  activeTab === 'respaldo'
-                    ? 'bg-zinc-950 text-white'
-                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                }`}
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Google Sheets y Máquinas</span>
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsBusinessProfileModalOpen(true)}
-                className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-800 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors"
-              >
-                <Building2 className="w-3.5 h-3.5 text-emerald-700" />
-                <span>
-                  Emprendimiento ({businessProfile.appName}) / Tarifas
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsOfflineAndAliasModalOpen(true)}
-                className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors"
-              >
-                <Wifi className="w-3.5 h-3.5 text-emerald-700" />
-                <span>Alias ({paymentProfile.alias}) / Modo Campo</span>
-              </button>
-              <PWAInstallButton />
-            </div>
-          </section>
-        )}
-
-        {/* TAB 1: HOY / MI RUTA — Minimalist Architectural Workspace */}
+        {/* ==================================================================
+            TAB 1: HOY / MI RUTA — STREAMLINED ARCHITECTURAL WORKSPACE
+            ================================================================== */}
         {activeTab === 'ruta' && (
-          <div className="space-y-4">
-            {/* Minimalist Executive Daily Summary Card */}
+          <div className="space-y-4" data-testid="ruta-split-cockpit">
+            {/* 1. CLEAN SUMMARY & DISPATCH BAR (Zero Clutter) */}
             <section
-              aria-label="Resumen operativo de la jornada"
-              className="surface-card rounded-2xl p-4 sm:p-5 space-y-4"
+              data-testid="compact-route-telemetry-bar"
+              className="bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-2xs overflow-hidden"
             >
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                {/* Left: Date Selector + Minimalist Context Line */}
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <div className="inline-flex items-center bg-zinc-100 rounded-xl p-0.5 border border-zinc-200/80">
-                      <button
-                        type="button"
-                        onClick={() => shiftActiveDate(-1)}
-                        aria-label="Día anterior"
-                        className="min-h-[32px] min-w-[30px] flex items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-950 hover:bg-white transition-colors"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveDate(TODAY_REFERENCE)}
-                        className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
-                          activeDate === TODAY_REFERENCE
-                            ? 'bg-zinc-950 text-white'
-                            : 'text-zinc-700 hover:bg-white'
-                        }`}
-                      >
-                        Hoy
-                      </button>
-                      <input
-                        type="date"
-                        aria-label="Fecha de jornada activa"
-                        value={activeDate}
-                        onChange={(e) =>
-                          setActiveDate(e.target.value || TODAY_REFERENCE)
-                        }
-                        className="bg-transparent text-xs font-mono font-semibold text-zinc-900 px-2 py-1 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => shiftActiveDate(1)}
-                        aria-label="Día siguiente"
-                        className="min-h-[32px] min-w-[30px] flex items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-950 hover:bg-white transition-colors"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
+              {/* Top Row: 3 Focused Operational KPIs + Active Date & Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
+                {/* KPI 1: Ingresos del Día */}
+                <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-medium text-slate-500">
+                      Facturación del Día
                     </div>
-
-                    {/* Weather & Quick Settings Links */}
-                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-zinc-500">
-                      <span className="inline-flex items-center gap-1 font-medium text-zinc-800">
-                        {activeDayWeather.condition === 'Alerta Lluvia' ? (
-                          <CloudRain className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                        ) : activeDayWeather.condition ===
-                          'Parcialmente Nublado' ? (
-                          <CloudSun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        ) : (
-                          <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        )}
-                        <span>
-                          {activeDayWeather.tempMax}°C ·{' '}
-                          {activeDayWeather.condition}
-                        </span>
-                      </span>
-
-                      <span aria-hidden="true" className="text-zinc-300">
-                        ·
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsBaseModalOpen(true)}
-                        className="inline-flex items-center gap-1 hover:text-zinc-950 transition-colors"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>Salida: {baseLocation.city}</span>
-                        <span className="underline text-zinc-700 font-medium">
-                          Cambiar
-                        </span>
-                      </button>
-
-                      <span aria-hidden="true" className="text-zinc-300">
-                        ·
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsBusinessProfileModalOpen(true)}
-                        className="inline-flex items-center gap-1 hover:text-zinc-950 transition-colors"
-                      >
-                        <span>App: {businessProfile.appName}</span>
-                        <span className="underline text-zinc-700 font-medium">
-                          Editar nombre
-                        </span>
-                      </button>
-
-                      <span aria-hidden="true" className="text-zinc-300">
-                        ·
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsOfflineAndAliasModalOpen(true)}
-                        className="inline-flex items-center gap-1 hover:text-zinc-950 transition-colors"
-                      >
-                        {!isOnline ? (
-                          <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-                        ) : (
-                          <Wifi className="w-3.5 h-3.5 text-emerald-600" />
-                        )}
-                        <span className="underline text-zinc-700 font-medium">
-                          {!isOnline || offlinePendingCount > 0
-                            ? `Sin señal (${offlinePendingCount})`
-                            : `Alias: ${paymentProfile.alias}`}
-                        </span>
-                      </button>
+                    <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums tracking-tight mt-0.5">
+                      ${routeMetrics.expectedRevenueToday.toLocaleString('es-AR')}
                     </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono font-semibold">
+                    {activeDateJobs.length} paradas
+                  </span>
+                </div>
+
+                {/* KPI 2: Progreso de la Jornada */}
+                <div className="px-4 py-3.5 flex flex-col justify-center">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-slate-500">
+                      Avance de Visitas
+                    </span>
+                    <span className="font-mono font-bold text-slate-900 tabular-nums">
+                      {routeMetrics.completedCount} de {activeDateJobs.length} listas ({completionRatio}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-2">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${completionRatio}%` }}
+                    />
                   </div>
                 </div>
 
-                {/* Right: 3 Clean Inline Typographic Metrics + Add Stop CTA */}
-                <div className="flex flex-wrap items-center justify-between lg:justify-end gap-5 pt-3 lg:pt-0 border-t lg:border-t-0 border-zinc-100">
-                  <div className="flex items-center gap-5">
-                    <div>
-                      <div className="text-[11px] font-medium text-zinc-500">
-                        Avance
-                      </div>
-                      <div className="text-base sm:text-lg font-bold font-mono text-zinc-950 tabular-nums">
-                        {routeMetrics.completedCount}/{activeDateJobs.length}{' '}
-                        <span className="text-xs font-sans font-normal text-zinc-500">
-                          ({completionRatio}%)
-                        </span>
-                      </div>
+                {/* KPI 3: Recorrido y Tiempo Estimado */}
+                <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-medium text-slate-500">
+                      Recorrido GPS ({baseLocation.city})
                     </div>
-
-                    <div className="h-7 w-px bg-zinc-200" />
-
-                    <div>
-                      <div className="text-[11px] font-medium text-zinc-500">
-                        Estimado Hoy
-                      </div>
-                      <div className="text-base sm:text-lg font-bold font-mono text-emerald-700 tabular-nums">
-                        $
-                        {routeMetrics.expectedRevenueToday.toLocaleString(
-                          'es-AR'
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="h-7 w-px bg-zinc-200 hidden sm:block" />
-
-                    <div className="hidden sm:block">
-                      <div className="text-[11px] font-medium text-zinc-500">
-                        Recorrido
-                      </div>
-                      <div className="text-base font-bold font-mono text-zinc-900 tabular-nums">
-                        {routeMetrics.totalDistanceKm} km
-                      </div>
+                    <div className="font-display text-lg sm:text-xl font-bold text-slate-900 tabular-nums mt-0.5">
+                      {routeMetrics.totalDistanceKm} km{' '}
+                      <span className="text-xs font-sans font-normal text-slate-500">
+                        (~{Math.round((routeMetrics.totalWorkMinutes / 60) * 10) / 10} hs)
+                      </span>
                     </div>
                   </div>
+                  <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium">
+                    <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span>{activeDayWeather.tempMax}°C</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Toolbar: Single Clean Row with Date Picker, Status Filter & Primary Actions */}
+              <div className="px-4 py-2.5 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2.5">
+                {/* Left: Date Selector + Status Filter */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center bg-white rounded-xl p-0.5 border border-slate-200 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => shiftActiveDate(-1)}
+                      aria-label="Día anterior"
+                      className="min-h-[30px] min-w-[28px] flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeDate !== TODAY_REFERENCE) {
+                          triggerDailyJobsTransition('date', 240);
+                          setActiveDate(TODAY_REFERENCE);
+                        }
+                      }}
+                      className={`min-h-[30px] px-2.5 py-0.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        activeDate === TODAY_REFERENCE
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      Hoy
+                    </button>
+                    <input
+                      type="date"
+                      aria-label="Fecha de jornada activa"
+                      value={activeDate}
+                      onChange={(e) => {
+                        const nextDate = e.target.value || TODAY_REFERENCE;
+                        triggerDailyJobsTransition('date', 240);
+                        setActiveDate(nextDate);
+                      }}
+                      className="bg-transparent text-xs font-mono font-semibold text-slate-900 px-2 py-0.5 focus:outline-none w-[116px] sm:w-auto"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => shiftActiveDate(1)}
+                      aria-label="Día siguiente"
+                      className="min-h-[30px] min-w-[28px] flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div
+                    role="group"
+                    aria-label="Filtrar paradas del día"
+                    className="inline-flex items-center p-0.5 bg-white border border-slate-200 rounded-xl shadow-2xs"
+                  >
+                    {(
+                      [
+                        {
+                          id: 'todos',
+                          label: `Todas (${activeDateJobs.length})`,
+                        },
+                        {
+                          id: 'pendientes',
+                          label: `Pendientes (${routeMetrics.pendingCount})`,
+                        },
+                        {
+                          id: 'completados',
+                          label: `Listas (${routeMetrics.completedCount})`,
+                        },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          triggerDailyJobsTransition('filter', 220);
+                          setRouteStatusFilter(tab.id);
+                        }}
+                        className={`min-h-[30px] px-2.5 py-0.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+                          routeStatusFilter === tab.id
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right: 2 Clear Route Actions */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOptimizeRoute}
+                    title="Ordenar paradas por menor distancia con algoritmo 2-Opt TSP"
+                    className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl cursor-pointer whitespace-nowrap shadow-2xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Optimizar Ruta</span>
+                  </button>
 
                   <button
                     type="button"
@@ -2578,219 +2954,81 @@ export default function App() {
                         defaultTime: '08:30',
                       })
                     }
-                    className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors whitespace-nowrap"
+                    className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl cursor-pointer whitespace-nowrap shadow-2xs"
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>Sumar Corte a Hoy</span>
+                    <Plus className="w-3.5 h-3.5 text-emerald-400 stroke-[2.5]" />
+                    <span>Agendar Lote</span>
                   </button>
                 </div>
               </div>
-
-              {/* Minimalist 7-Day Week Switcher */}
-              <div
-                role="group"
-                aria-label="Cambiar rápido de día en la semana actual"
-                className="flex sm:grid sm:grid-cols-7 gap-1.5 pt-3 border-t border-zinc-100 overflow-x-auto pb-0.5 sm:pb-0"
-              >
-                {activeWeekDays.map((dayCell) => {
-                  const isSelectedDay = dayCell.dateStr === activeDate;
-                  const jobsCount = dayCell.jobs.length;
-                  return (
-                    <button
-                      key={dayCell.dateStr}
-                      type="button"
-                      onClick={() => setActiveDate(dayCell.dateStr)}
-                      className={`min-h-[44px] min-w-[68px] sm:min-w-0 px-2.5 py-1.5 rounded-xl flex flex-col items-center justify-center shrink-0 transition-all border ${
-                        isSelectedDay
-                          ? 'bg-zinc-950 text-white border-zinc-950 font-semibold'
-                          : 'bg-zinc-50/80 text-zinc-700 border-zinc-200/60 hover:bg-zinc-100'
-                      }`}
-                    >
-                      <span className="text-[10px] font-medium opacity-80 whitespace-nowrap">
-                        {dayCell.weekdayShort} {dayCell.dayOfMonth}
-                      </span>
-                      <span
-                        className={`text-[11px] font-mono tabular-nums mt-0.5 whitespace-nowrap ${
-                          isSelectedDay
-                            ? 'text-emerald-400 font-semibold'
-                            : jobsCount > 0
-                            ? 'text-emerald-700 font-medium'
-                            : 'text-zinc-400'
-                        }`}
-                      >
-                        {jobsCount === 1
-                          ? '1 corte'
-                          : jobsCount > 1
-                          ? `${jobsCount} cortes`
-                          : 'Libre'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
             </section>
 
-            {/* Mobile Sub-View Switcher: Lista vs Mapa */}
-            <div className="grid grid-cols-2 gap-1.5 lg:hidden surface-card p-1 rounded-xl">
+            {/* Selector Móvil: Órdenes vs Mapa GPS */}
+            <div className="grid grid-cols-2 gap-1.5 lg:hidden bg-white border border-slate-200 p-1 rounded-xl">
               <button
                 type="button"
                 onClick={() => setMobileRouteSubView('list')}
-                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-all ${
+                className={`min-h-[34px] rounded-lg text-xs font-semibold transition-all ${
                   mobileRouteSubView === 'list'
-                    ? 'bg-zinc-950 text-white'
-                    : 'text-zinc-600 hover:bg-zinc-100'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
-                Lista de Cortes ({activeDateJobs.length})
+                Órdenes del Día ({activeDateJobs.length})
               </button>
               <button
                 type="button"
                 onClick={() => setMobileRouteSubView('map')}
-                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-all ${
+                className={`min-h-[34px] rounded-lg text-xs font-semibold transition-all ${
                   mobileRouteSubView === 'map'
-                    ? 'bg-zinc-950 text-white'
-                    : 'text-zinc-600 hover:bg-zinc-100'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
-                Mapa GPS en Vivo
+                Mapa GPS ({activeDateJobs.length})
               </button>
             </div>
 
-            {/* Two-Column Split: Stop Timeline List (Left) + Interactive GPS Map (Right) */}
+            {/* ASYMMETRIC 7:5 WORKSPACE:
+                LEFT (7 COLS) = CLEAN, HIGH-DENSITY CSS GRID WORK ORDER CARDS
+                RIGHT (5 COLS) = STICKY INTERACTIVE GPS MAP */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* Left Column: Minimalist Filter Bar & Stop Cards */}
+              {/* LEFT COLUMN: WORK ORDERS */}
               <div
-                className={`lg:col-span-6 space-y-2.5 ${
+                data-testid="daily-jobs-primary-column"
+                className={`lg:col-span-7 space-y-2.5 min-w-0 ${
                   mobileRouteSubView === 'map' ? 'hidden lg:block' : 'block'
                 }`}
               >
-                {/* Clean Single-Row Filter, Search & Route Optimization Bar */}
-                <div className="surface-card rounded-2xl p-3 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div
-                      role="group"
-                      aria-label="Filtrar paradas del día"
-                      className="inline-flex items-center p-0.5 bg-zinc-100 rounded-xl"
-                    >
-                      {(
-                        [
-                          {
-                            id: 'todos',
-                            label: `Todos (${activeDateJobs.length})`,
-                          },
-                          {
-                            id: 'pendientes',
-                            label: `Pendientes (${routeMetrics.pendingCount})`,
-                          },
-                          {
-                            id: 'completados',
-                            label: `Listos (${routeMetrics.completedCount})`,
-                          },
-                        ] as const
-                      ).map((tab) => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => setRouteStatusFilter(tab.id)}
-                          className={`min-h-[30px] px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                            routeStatusFilter === tab.id
-                              ? 'bg-white text-zinc-950 shadow-2xs'
-                              : 'text-zinc-600 hover:text-zinc-950'
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={handleOptimizeRoute}
-                        className="min-h-[32px] inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-zinc-700 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors whitespace-nowrap"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Ordenar por cercanía</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleRainDelay}
-                        title="Pasar los cortes pendientes para mañana por lluvia"
-                        className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-zinc-700 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors whitespace-nowrap"
-                      >
-                        <CloudRain className="w-3.5 h-3.5 text-sky-600" />
-                        <span>Llovió (+1d)</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <input
-                        type="text"
-                        placeholder="Buscar cliente o calle..."
-                        value={routeSearchQuery}
-                        onChange={(e) => setRouteSearchQuery(e.target.value)}
-                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-50 border border-zinc-200/80 rounded-xl focus:outline-none focus:bg-white focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-
-                    {activeDateJobs.length > 0 && (
-                      <a
-                        href={fullRouteGoogleMapsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="min-h-[32px] inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors whitespace-nowrap shrink-0"
-                      >
-                        <Navigation className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Ruta GPS</span>
-                        <ExternalLink className="w-3 h-3 text-zinc-400" />
-                      </a>
-                    )}
-                  </div>
-                </div>
-
                 {filteredActiveDateJobs.length === 0 ? (
-                  <div className="surface-card rounded-2xl p-8 text-center space-y-3">
-                    <p className="text-base font-bold text-zinc-900">
+                  <div className="bento-tile rounded-2xl p-8 text-center space-y-3">
+                    <p className="font-display text-base sm:text-lg font-bold text-slate-900">
                       {activeDateJobs.length === 0
-                        ? `Sin cortes agendados para el ${activeDate}`
-                        : 'No hay paradas que coincidan con ese filtro'}
+                        ? `Sin órdenes programadas para el ${activeDate}`
+                        : 'No hay órdenes que coincidan con ese filtro'}
                     </p>
-                    <p className="text-xs sm:text-sm text-zinc-500 max-w-md mx-auto">
+                    <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
                       {activeDateJobs.length === 0
-                        ? 'Programa un corte para esta fecha o consulta la agenda semanal y mensual.'
-                        : 'Cambia el filtro a "Todos" o limpia el buscador.'}
+                        ? 'Asigná un lote existente a esta fecha o consultá la agenda semanal.'
+                        : 'Cambiá el filtro a "Todas" para ver la hoja de ruta completa.'}
                     </p>
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                       {activeDateJobs.length === 0 ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setScheduleModalState({
-                                isOpen: true,
-                                preselectedPropertyId: null,
-                                defaultDate: activeDate,
-                                defaultTime: '08:30',
-                              })
-                            }
-                            className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-950 rounded-xl hover:bg-zinc-800"
-                          >
-                            <Plus className="w-4 h-4" />
-                            <span>Programar Corte</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('agenda')}
-                            className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-zinc-700 bg-zinc-100 rounded-xl hover:bg-zinc-200"
-                          >
-                            <CalendarIcon className="w-4 h-4" />
-                            <span>Ver Agenda</span>
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setScheduleModalState({
+                              isOpen: true,
+                              preselectedPropertyId: null,
+                              defaultDate: activeDate,
+                              defaultTime: '08:30',
+                            })
+                          }
+                          className="min-h-[36px] inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-slate-900 rounded-xl hover:bg-slate-800 cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4 text-emerald-400" />
+                          <span>Programar Corte</span>
+                        </button>
                       ) : (
                         <button
                           type="button"
@@ -2798,15 +3036,20 @@ export default function App() {
                             setRouteStatusFilter('todos');
                             setRouteSearchQuery('');
                           }}
-                          className="min-h-[38px] px-4 py-2 text-xs font-semibold text-zinc-800 bg-zinc-100 rounded-xl hover:bg-zinc-200"
+                          className="min-h-[34px] px-4 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 rounded-xl hover:bg-slate-200 cursor-pointer"
                         >
-                          Mostrar todas las paradas ({activeDateJobs.length})
+                          Mostrar todas las órdenes ({activeDateJobs.length})
                         </button>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
+                  <div
+                    key={`work-orders-batch-${dailyJobsRenderBatch}`}
+                    className="space-y-2.5"
+                    data-testid="work-orders-list"
+                    aria-busy="false"
+                  >
                     {filteredActiveDateJobs.map((job) => {
                       const isSelected = job.id === selectedJobId;
                       const isCompleted = job.status === 'Completado';
@@ -2814,7 +3057,7 @@ export default function App() {
                       const navUrl = buildGoogleMapsNavUrl(job.coordinates);
                       const whatsappEtaUrl = buildSafeWhatsAppUrl(
                         job.phone,
-                        `Hola ${job.clientName}, te aviso que estoy yendo para ${job.address} a cortar el pasto.`
+                        `Hola ${job.clientName}, te aviso que estoy en camino hacia ${job.address} para realizar el servicio de mantenimiento de césped.`
                       );
                       const matchingInvoice = invoices.find(
                         (inv) => inv.id === job.invoiceId
@@ -2822,502 +3065,208 @@ export default function App() {
                       const matchingProperty = properties.find(
                         (p) => p.id === job.propertyId
                       );
-                      const clientHistory = getClientPriceHistory(
-                        job.propertyId,
-                        job.clientName,
-                        invoices
-                      );
-                      const cutTimeSummary = getClientCutTimeHistory(
-                        job.propertyId,
-                        job.clientName,
-                        invoices,
-                        scheduledJobs,
-                        job.estimatedMinutes,
-                        job.areaSqm
-                      );
-                      const isTimerOnThisJob =
-                        activeCutTimer?.jobId === job.id;
-                      const recordedDurationMin =
-                        job.actualDurationMinutes ||
-                        matchingInvoice?.actualDurationMinutes;
-                      const endTime = computeEndTimeFromStart(
-                        job.scheduledTime || '08:00',
-                        job.estimatedMinutes
+                      const formattedIndex = String(job.orderIndex).padStart(
+                        2,
+                        '0'
                       );
 
                       return (
                         <article
                           key={job.id}
+                          data-testid="daily-job-card"
                           onClick={() => setSelectedJobId(job.id)}
-                          className={`surface-card card-interactive-lift rounded-2xl p-4 transition-all cursor-pointer min-w-0 break-words ${
+                          className={`bento-tile bento-tile-interactive rounded-xl overflow-hidden cursor-pointer min-w-0 grid grid-cols-1 md:grid-cols-[58px_minmax(0,1fr)_188px] items-stretch transition-all ${
                             isSelected
-                              ? 'stop-card-spotlight ring-1 ring-emerald-600/20'
+                              ? 'ring-2 ring-slate-900/15 border-slate-900'
                               : ''
-                          } ${isCompleted ? 'opacity-75 bg-zinc-50/70' : ''}`}
+                          }`}
                         >
-                          {/* Clean Minimalist Header Row */}
-                          <div className="flex items-start justify-between gap-3 min-w-0">
-                            <div className="flex items-start gap-3 min-w-0">
-                              <div className="flex flex-col items-center gap-1 shrink-0">
-                                <div
-                                  className={`w-8 h-8 rounded-lg flex items-center justify-center font-mono text-xs font-bold ${
-                                    isCompleted
-                                      ? 'bg-emerald-100 text-emerald-800'
+                          {/* GRID CELL 1: CLEAN STOP NUMBER & TIME */}
+                          <div
+                            className={`px-3 py-2 md:p-2.5 flex md:flex-col items-center justify-between md:justify-center gap-1 border-b md:border-b-0 md:border-r ${
+                              isCompleted
+                                ? 'bg-emerald-50/70 text-emerald-800 border-emerald-200'
+                                : isSelected
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-900 border-slate-200'
+                            }`}
+                          >
+                            <span
+                              className={`font-display text-lg md:text-xl font-bold tabular-nums leading-none ${
+                                isSelected
+                                  ? 'text-white'
+                                  : isCompleted
+                                  ? 'text-emerald-700'
+                                  : 'text-slate-900'
+                              }`}
+                            >
+                              #{formattedIndex}
+                            </span>
+                            <span
+                              className={`font-mono text-[11px] font-semibold tabular-nums ${
+                                isSelected
+                                  ? 'text-emerald-400'
+                                  : isCompleted
+                                  ? 'text-emerald-700'
+                                  : 'text-slate-500'
+                              }`}
+                            >
+                              {job.scheduledTime || '08:00'}
+                            </span>
+                          </div>
+
+                          {/* GRID CELL 2: CLIENT, ADDRESS & CONCISE TASKS */}
+                          <div className="p-3 sm:px-4 sm:py-3 bg-white min-w-0 flex flex-col justify-between gap-2">
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <h3 className="font-display text-sm sm:text-[15px] font-bold text-slate-900 leading-tight truncate">
+                                    {job.clientName}
+                                  </h3>
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 ${
+                                      isCompleted
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : isInProgress
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {isCompleted
+                                      ? 'Completado'
                                       : isInProgress
-                                      ? 'bg-amber-500 text-zinc-950'
-                                      : isSelected
-                                      ? 'bg-emerald-600 text-white'
-                                      : 'bg-zinc-100 text-zinc-800'
-                                  }`}
-                                >
-                                  {isCompleted ? '✓' : job.orderIndex}
-                                </div>
-                                {isSelected &&
-                                  !isCompleted &&
-                                  activeDateJobs.length > 1 && (
-                                    <div
-                                      className="flex items-center gap-0.5"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleMoveJobOrder(job.id, 'up')
-                                        }
-                                        disabled={job.orderIndex <= 1}
-                                        title="Subir parada en el orden"
-                                        aria-label={`Subir orden de ${job.clientName}`}
-                                        className="p-0.5 text-zinc-400 hover:text-zinc-900 disabled:opacity-25 rounded"
-                                      >
-                                        <ArrowUp className="w-3 h-3" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleMoveJobOrder(job.id, 'down')
-                                        }
-                                        disabled={
-                                          job.orderIndex >=
-                                          activeDateJobs.length
-                                        }
-                                        title="Bajar parada en el orden"
-                                        aria-label={`Bajar orden de ${job.clientName}`}
-                                        className="p-0.5 text-zinc-400 hover:text-zinc-900 disabled:opacity-25 rounded"
-                                      >
-                                        <ArrowDown className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  )}
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono text-zinc-500 tabular-nums">
-                                  <span className="font-semibold text-zinc-800">
-                                    {job.scheduledTime || '08:00'}–{endTime}
+                                      ? 'En curso'
+                                      : 'Pendiente'}
                                   </span>
-                                  <span aria-hidden="true">·</span>
-                                  <span className="font-sans text-zinc-600">
-                                    {job.neighborhood}
-                                  </span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>{job.legDistanceKm || 1.9} km</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span
-                                    data-testid="stop-cut-time-badge"
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200/80 text-[11px] font-semibold"
-                                  >
-                                    <Clock className="w-3 h-3 shrink-0" />
-                                    {isTimerOnThisJob ? (
-                                      <span>
-                                        {formatStopwatchSeconds(
-                                          activeCutTimer.elapsedSeconds
-                                        )}
-                                      </span>
-                                    ) : recordedDurationMin ? (
-                                      <span>Real: {recordedDurationMin} min</span>
-                                    ) : (
-                                      <span>
-                                        Prom:{' '}
-                                        {cutTimeSummary.averageMinutes ??
-                                          job.estimatedMinutes}{' '}
-                                        min
-                                      </span>
-                                    )}
-                                  </span>
-                                  {isInProgress && (
-                                    <>
-                                      <span aria-hidden="true">·</span>
-                                      <span className="font-sans font-semibold text-amber-700">
-                                        En curso
-                                      </span>
-                                    </>
-                                  )}
                                 </div>
 
-                                <h3 className="font-display text-base font-bold text-zinc-950 mt-0.5 leading-snug break-words">
-                                  {job.clientName}
-                                </h3>
-
-                                <p className="text-xs text-zinc-500 mt-0.5 flex flex-wrap items-center gap-1.5 break-words">
-                                  <span>{job.address}</span>
-                                  <span
-                                    aria-hidden="true"
-                                    className="text-zinc-300"
-                                  >
-                                    ·
-                                  </span>
-                                  <span className="font-mono tabular-nums">
-                                    {job.areaSqm} m²
-                                  </span>
-                                </p>
+                                <span className="text-xs font-mono text-slate-500 tabular-nums shrink-0">
+                                  {job.propertyType} · {job.areaSqm} m²
+                                </span>
                               </div>
+
+                              <p className="text-xs text-slate-500 flex items-center gap-1.5 truncate">
+                                <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span className="font-medium text-slate-700 truncate">
+                                  {job.address}
+                                </span>
+                                <span className="text-slate-300">·</span>
+                                <span className="truncate">{job.neighborhood}</span>
+                              </p>
                             </div>
 
-                            <div className="text-right shrink-0">
-                              <div className="text-base sm:text-lg font-bold font-mono text-zinc-950 tabular-nums">
-                                ${job.price.toLocaleString('es-AR')}
-                              </div>
-                              <div className="text-[11px] font-mono text-zinc-400 mt-0.5 tabular-nums">
-                                {clientHistory.lastAmount ? (
-                                  <span>
-                                    Ant: $
-                                    {clientHistory.lastAmount.toLocaleString(
-                                      'es-AR'
-                                    )}
+                            {/* Concise Tasks Row */}
+                            <div
+                              data-testid="job-card-main-tasks"
+                              className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600"
+                            >
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+                                {(job.tasks.length > 0
+                                  ? job.tasks.slice(0, 2)
+                                  : ['Corte general y bordeado']
+                                ).map((taskItem, tIdx) => (
+                                  <span
+                                    key={`${job.id}-task-${tIdx}`}
+                                    className="inline-flex items-center gap-1"
+                                  >
+                                    <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                                    <span className="truncate">{taskItem}</span>
                                   </span>
-                                ) : (
-                                  <span className="font-sans">1° visita</span>
-                                )}
+                                ))}
                               </div>
-                              {(job.photoUrl || matchingInvoice?.photoUrl) && (
-                                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 mt-0.5">
-                                  <Camera className="w-3 h-3" />
-                                  <span>Foto</span>
-                                </div>
+
+                              {job.accessNotes && (
+                                <span className="text-[11px] text-slate-400 truncate max-w-[220px]" title={job.accessNotes}>
+                                  Nota: {job.accessNotes}
+                                </span>
                               )}
                             </div>
                           </div>
 
-                          {/* Expanded Details & Full Controls only on Selected Stop */}
-                          {isSelected ? (
-                            <div
-                              className="mt-3.5 pt-3 border-t border-zinc-100 space-y-3"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div className="text-xs text-zinc-600 space-y-1 bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60 break-words">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div>
-                                    <span className="font-semibold text-zinc-900">
-                                      Tareas:
-                                    </span>{' '}
-                                    {job.tasks.join(' + ')}
-                                  </div>
-                                  <span className="font-mono text-[11px] text-zinc-500 tabular-nums">
-                                    {job.propertyType} · {job.frequency}
-                                  </span>
-                                </div>
-                                {job.accessNotes && (
-                                  <div className="text-xs text-zinc-500">
-                                    <span className="font-medium text-zinc-700">
-                                      Nota:
-                                    </span>{' '}
-                                    {job.accessNotes}
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Panel de Control de Tiempo e Historial de Corte en la Parada */}
-                              <div
-                                data-testid="stop-card-time-control"
-                                className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-200/80 flex flex-wrap items-center justify-between gap-2 text-xs"
-                              >
-                                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                                  <Timer className="w-4 h-4 text-teal-700 shrink-0" />
-                                  <div className="min-w-0">
-                                    <span className="font-bold text-teal-950">
-                                      Tiempo de corte:
-                                    </span>{' '}
-                                    {isTimerOnThisJob ? (
-                                      <span className="font-mono font-bold text-teal-800">
-                                        {formatStopwatchSeconds(
-                                          activeCutTimer.elapsedSeconds
-                                        )}{' '}
-                                        en curso
-                                      </span>
-                                    ) : recordedDurationMin ? (
-                                      <span className="font-mono font-bold text-teal-800">
-                                        {recordedDurationMin} min registrados
-                                      </span>
-                                    ) : (
-                                      <span className="font-mono text-teal-900">
-                                        Est. {job.estimatedMinutes} min · Prom.
-                                        cliente:{' '}
-                                        <strong>
-                                          {cutTimeSummary.averageMinutes ??
-                                            job.estimatedMinutes}{' '}
-                                          min
-                                        </strong>
-                                        {cutTimeSummary.lastDurationMinutes
-                                          ? ` (Últ: ${cutTimeSummary.lastDurationMinutes} min)`
-                                          : ''}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  {!isCompleted && (
-                                    <button
-                                      type="button"
-                                      data-testid="stop-start-timer-btn"
-                                      onClick={() =>
-                                        handleStartJob(job.id, true)
-                                      }
-                                      className={`min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-                                        isTimerOnThisJob &&
-                                        activeCutTimer.isRunning
-                                          ? 'bg-amber-500 text-zinc-950'
-                                          : 'bg-[#0B1D16] text-teal-300 hover:bg-emerald-950'
-                                      }`}
-                                    >
-                                      {isTimerOnThisJob &&
-                                      activeCutTimer.isRunning ? (
-                                        <>
-                                          <Pause className="w-3 h-3" />
-                                          <span>Pausar Reloj</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Play className="w-3 h-3" />
-                                          <span>
-                                            {isTimerOnThisJob
-                                              ? 'Reanudar Reloj'
-                                              : 'Cronometrar Corte'}
-                                          </span>
-                                        </>
-                                      )}
-                                    </button>
-                                  )}
-                                  {matchingProperty && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setHistoryClientModal(matchingProperty)
-                                      }
-                                      className="min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-teal-900 bg-white border border-teal-200 hover:bg-teal-100 transition-colors"
-                                    >
-                                      <History className="w-3 h-3" />
-                                      <span>
-                                        Historial de tiempos (
-                                        {cutTimeSummary.totalTimedCuts})
-                                      </span>
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {!isCompleted ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setJobToComplete(job)}
-                                    className="col-span-2 sm:col-span-1 min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors"
-                                  >
-                                    <Check className="w-3.5 h-3.5 shrink-0" />
-                                    <span>Terminar y Cobrar</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartJob(job.id)}
-                                    className={`min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition-colors ${
-                                      isInProgress
-                                        ? 'bg-amber-500 text-zinc-950 border-amber-500'
-                                        : 'bg-white text-zinc-800 border-zinc-200 hover:bg-zinc-50'
-                                    }`}
-                                  >
-                                    <Play className="w-3.5 h-3.5 shrink-0" />
-                                    <span>
-                                      {isInProgress
-                                        ? 'En Curso'
-                                        : 'Iniciar Corte'}
-                                    </span>
-                                  </button>
-
-                                  <a
-                                    href={navUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition-colors"
-                                  >
-                                    <Navigation className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                    <span>Ir con GPS</span>
-                                  </a>
-
-                                  <a
-                                    href={whatsappEtaUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors"
-                                  >
-                                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                    <span>WhatsApp</span>
-                                  </a>
-                                </div>
-                              ) : (
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
-                                    <Check className="w-4 h-4 shrink-0" />
-                                    <span>
-                                      Corte finalizado (
-                                      {job.completedAt || 'Hoy'})
-                                      {recordedDurationMin
-                                        ? ` · ${recordedDurationMin} min`
-                                        : ''}
-                                    </span>
-                                  </span>
-
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {matchingInvoice && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedInvoiceReceipt(
-                                            matchingInvoice
-                                          )
-                                        }
-                                        className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-zinc-900 rounded-xl hover:bg-zinc-800"
-                                      >
-                                        <FileText className="w-3.5 h-3.5 shrink-0" />
-                                        <span>Comprobante / Imprimir</span>
-                                      </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleUndoCompletedJob(job.id)
-                                      }
-                                      className="min-h-[36px] inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-zinc-600 bg-zinc-100 hover:bg-zinc-200 rounded-xl"
-                                    >
-                                      <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-                                      <span>Reabrir</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-zinc-500">
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingScheduledJob(job)}
-                                    className="inline-flex items-center gap-1 font-semibold text-zinc-800 hover:text-emerald-700 hover:underline transition-colors"
-                                  >
-                                    <Pencil className="w-3 h-3" />
-                                    <span>
-                                      Modificar cita (Hora / Día / Precio)
-                                    </span>
-                                  </button>
-
-                                  {matchingProperty && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setHistoryClientModal(matchingProperty)
-                                      }
-                                      className="inline-flex items-center gap-1 font-medium text-zinc-600 hover:text-zinc-950 hover:underline"
-                                    >
-                                      <History className="w-3 h-3" />
-                                      <span>
-                                        Cobros ({clientHistory.totalCutsCount})
-                                      </span>
-                                    </button>
-                                  )}
-
-                                  {matchingProperty && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingClient(matchingProperty);
-                                        setPrefillClientData(null);
-                                        setIsClientModalOpen(true);
-                                      }}
-                                      className="inline-flex items-center gap-1 font-medium text-zinc-600 hover:text-zinc-950 hover:underline"
-                                    >
-                                      <span>Ficha cliente</span>
-                                    </button>
-                                  )}
-                                </div>
-
-                                {!isCompleted && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleRemoveStopFromSchedule(
-                                        job.id,
-                                        job.clientName
-                                      )
-                                    }
-                                    aria-label={`Quitar parada de ${job.clientName}`}
-                                    className="inline-flex items-center gap-1 font-medium text-zinc-400 hover:text-red-600"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                    <span>Quitar</span>
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            /* Minimalist Collapsed Footer Row for Non-Selected Stops */
-                            <div
-                              className="mt-2.5 pt-2 border-t border-zinc-100 flex items-center justify-between gap-2"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div className="flex items-center gap-3 text-xs">
+                          {/* GRID CELL 3: PRICE & FOCUSED ACTIONS */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-3 bg-slate-50/60 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col justify-between gap-2"
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1">
                                 <button
                                   type="button"
                                   onClick={() => setEditingScheduledJob(job)}
-                                  className="inline-flex items-center gap-1 font-medium text-zinc-500 hover:text-zinc-900"
+                                  title="Editar orden"
+                                  className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-900 cursor-pointer"
                                 >
-                                  <Pencil className="w-3 h-3" />
-                                  <span>Editar cita</span>
+                                  <Pencil className="w-3.5 h-3.5" />
                                 </button>
-                                <a
-                                  href={navUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 font-medium text-zinc-500 hover:text-zinc-900"
-                                >
-                                  <Navigation className="w-3 h-3 text-emerald-600" />
-                                  <span>GPS</span>
-                                </a>
+                                {matchingProperty && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setHistoryClientModal(matchingProperty)
+                                    }
+                                    title="Ver ficha e historial del cliente"
+                                    className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-900 cursor-pointer"
+                                  >
+                                    <History className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
 
+                              <div
+                                data-testid={`job-card-price-${job.orderIndex}`}
+                                className={`font-display text-base sm:text-lg font-bold tabular-nums tracking-tight ${
+                                  isCompleted ? 'text-emerald-600' : 'text-slate-900'
+                                }`}
+                              >
+                                ${job.price.toLocaleString('es-AR')}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
                               {!isCompleted ? (
                                 <button
                                   type="button"
                                   onClick={() => setJobToComplete(job)}
-                                  className="min-h-[32px] inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+                                  className="w-full min-h-[30px] inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer shadow-2xs"
                                 >
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>Terminar y Cobrar</span>
+                                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  <span>Cobrar</span>
                                 </button>
-                              ) : (
-                                matchingInvoice && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setSelectedInvoiceReceipt(matchingInvoice)
-                                    }
-                                    className="min-h-[32px] inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors"
-                                  >
-                                    <FileText className="w-3.5 h-3.5" />
-                                    <span>Comprobante</span>
-                                  </button>
-                                )
-                              )}
+                              ) : matchingInvoice ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedInvoiceReceipt(matchingInvoice)
+                                  }
+                                  className="w-full min-h-[30px] inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 cursor-pointer"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  <span>Ver Recibo</span>
+                                </button>
+                              ) : null}
+
+                              <div className="grid grid-cols-2 gap-1">
+                                <a
+                                  href={navUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="min-h-[28px] inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
+                                >
+                                  <Navigation className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  <span>Mapa</span>
+                                </a>
+                                <a
+                                  href={whatsappEtaUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="min-h-[28px] inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
+                                >
+                                  <MessageCircle className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  <span>Avisar</span>
+                                </a>
+                              </div>
                             </div>
-                          )}
+                          </div>
                         </article>
                       );
                     })}
@@ -3325,9 +3274,9 @@ export default function App() {
                 )}
               </div>
 
-              {/* Right Column: Interactive Google Map with Dynamic Base */}
+              {/* RIGHT COLUMN (5 COLS): CLEAN STICKY GOOGLE MAPS PANEL */}
               <div
-                className={`lg:col-span-6 lg:sticky lg:top-20 ${
+                className={`lg:col-span-5 lg:sticky lg:top-20 min-w-0 ${
                   mobileRouteSubView === 'list' ? 'hidden lg:block' : 'block'
                 }`}
               >
@@ -3390,6 +3339,7 @@ export default function App() {
             todayJobs={activeDateJobs}
             invoices={invoices}
             paymentAlias={paymentProfile.alias}
+            isEasyAccessMode={isEasyAccessMode}
             onOpenNewClient={() => {
               setEditingClient(null);
               setPrefillClientData(null);
@@ -3434,6 +3384,17 @@ export default function App() {
           />
         )}
 
+        {/* TAB 3.5: JARDINERÍA Y CÉSPED (Manual Agronómico, Checklist de Salida y Servicios Adicionales) */}
+        {activeTab === 'jardineria' && (
+          <BotanicalAgronomyView
+            activeDate={activeDate}
+            todayJobs={activeDateJobs}
+            properties={properties}
+            onAddTaskToJob={handleAddTaskToJob}
+            onNavigateToRoute={() => setActiveTab('ruta')}
+          />
+        )}
+
         {/* TAB 4: COTIZADOR RÁPIDO */}
         {activeTab === 'cotizador' && (
           <QuoteCalculatorView
@@ -3455,6 +3416,7 @@ export default function App() {
         {activeTab === 'facturacion' && (
           <BillingView
             activeDate={activeDate}
+            isEasyAccessMode={isEasyAccessMode}
             properties={properties}
             invoices={invoices}
             expenses={expenses}
@@ -3504,87 +3466,114 @@ export default function App() {
           />
         )}
 
-        {/* TAB 7: PANEL EXCLUSIVO DE ADMINISTRADOR (CONTROL DE ACCESO MANUAL) */}
+        {/* TAB 7: PANEL EXCLUSIVO DE ADMINISTRADOR (CONTROL DE ACCESO MANUAL Y SOLICITUDES) */}
         {activeTab === 'admin' && isAdminUser && (
           <AdminControlPanelView
             currentUserEmail={activeUserEmail || 'hz.mdiego@gmail.com'}
             onShowToast={showBanner}
+            onNavigateToApp={() => setActiveTab('ruta')}
           />
         )}
-      </main>
+        </main>
+      </div>
 
-      {/* Mobile Bottom Navigation */}
+      {/* Architectural Slate Mobile Bottom Navigation Dock */}
       <nav
         aria-label="Navegación móvil"
-        className={`md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-zinc-200 grid ${
-          isAdminUser ? 'grid-cols-5' : 'grid-cols-4'
+        className={`md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.05)] grid ${
+          isAdminUser && !adminGardenerPreviewMode ? 'grid-cols-3' : 'grid-cols-4'
         } h-14 px-2`}
       >
-        <button
-          type="button"
-          onClick={() => setActiveTab('ruta')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
-            activeTab === 'ruta'
-              ? 'text-zinc-950 bg-zinc-100'
-              : 'text-zinc-500'
-          }`}
-        >
-          <Compass className="w-4 h-4" />
-          <span>Hoy / Ruta</span>
-        </button>
+        {isAdminUser && !adminGardenerPreviewMode ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setActiveTab('admin')}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 transition-all ${
+                activeTab === 'admin'
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600'
+              }`}
+            >
+              <ShieldCheck className={`w-4 h-4 ${activeTab === 'admin' ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span>Accesos</span>
+            </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('agenda')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
-            activeTab === 'agenda'
-              ? 'text-zinc-950 bg-zinc-100'
-              : 'text-zinc-500'
-          }`}
-        >
-          <CalendarIcon className="w-4 h-4" />
-          <span>Agenda</span>
-        </button>
+            <button
+              type="button"
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 text-slate-600 hover:text-slate-900"
+            >
+              <CreditCard className="w-4 h-4 text-slate-500" />
+              <span>Licencia</span>
+            </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('clientes')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
-            activeTab === 'clientes'
-              ? 'text-zinc-950 bg-zinc-100'
-              : 'text-zinc-500'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Clientes</span>
-        </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdminGardenerPreviewMode(true);
+                setActiveTab('ruta');
+              }}
+              className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 text-emerald-700 bg-emerald-50"
+            >
+              <Compass className="w-4 h-4 text-emerald-600" />
+              <span>Modo Demo</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setActiveTab('ruta')}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 transition-all ${
+                activeTab === 'ruta'
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600'
+              }`}
+            >
+              <Compass className={`w-4 h-4 ${activeTab === 'ruta' ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span>Hoy / Ruta</span>
+            </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('facturacion')}
-          className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
-            isMoreSectionActive
-              ? 'text-zinc-950 bg-zinc-100'
-              : 'text-zinc-500'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>Mi Plata</span>
-        </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('agenda')}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 transition-all ${
+                activeTab === 'agenda'
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600'
+              }`}
+            >
+              <CalendarIcon className={`w-4 h-4 ${activeTab === 'agenda' ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span>Agenda</span>
+            </button>
 
-        {isAdminUser && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('admin')}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 ${
-              activeTab === 'admin'
-                ? 'text-teal-900 bg-teal-100'
-                : 'text-teal-700'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Admin</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('clientes')}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 transition-all ${
+                activeTab === 'clientes'
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600'
+              }`}
+            >
+              <Users className={`w-4 h-4 ${activeTab === 'clientes' ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span>Clientes</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('facturacion')}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold rounded-xl my-1 transition-all ${
+                isMoreSectionActive
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600'
+              }`}
+            >
+              <BarChart3 className={`w-4 h-4 ${isMoreSectionActive ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span>Finanzas</span>
+            </button>
+          </>
         )}
       </nav>
 
@@ -3672,7 +3661,12 @@ export default function App() {
       />
 
       <ClientHistoryModal
-        client={historyClientModal}
+        client={
+          historyClientModal
+            ? properties.find((p) => p.id === historyClientModal.id) ||
+              historyClientModal
+            : null
+        }
         invoices={invoices}
         jobs={scheduledJobs}
         onClose={() => setHistoryClientModal(null)}
@@ -3682,6 +3676,7 @@ export default function App() {
           setIsClientModalOpen(true);
         }}
         onSelectInvoiceReceipt={(inv) => setSelectedInvoiceReceipt(inv)}
+        onAddClientPhotos={handleAddClientPhotos}
       />
 
       <ClientFormModal
@@ -3810,6 +3805,33 @@ export default function App() {
           );
         }}
         onClose={() => setIsOfflineAndAliasModalOpen(false)}
+      />
+
+      {/* Global Command Palette (⌘K / Ctrl+K) */}
+      <CommandPaletteModal
+        isOpen={isCommandPaletteOpen}
+        todayJobs={activeDateJobs}
+        properties={properties}
+        isDarkMode={isDarkMode}
+        isEasyAccessMode={isEasyAccessMode}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigateTab={(tab) => setActiveTab(tab)}
+        onSelectJobOnRoute={(jobId) => {
+          setActiveTab('ruta');
+          setSelectedJobId(jobId);
+        }}
+        onOpenClientHistory={(prop) => setHistoryClientModal(prop)}
+        onOpenNewCutModal={() => {
+          setEditingClient(null);
+          setPrefillClientData(null);
+          setModalDefaultDate(activeDate);
+          setModalDefaultTime('08:30');
+          setIsClientModalOpen(true);
+        }}
+        onOptimizeRoute2Opt={handleOptimizeRoute}
+        onRainDelay={handleRainDelay}
+        onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
+        onToggleVoiceMode={handleToggleEasyAccessMode}
       />
     </div>
   );

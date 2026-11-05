@@ -4,6 +4,7 @@ import {
   ClientProperty,
   EquipmentItem,
   InvoiceRecord,
+  JobPhotoItem,
   LatLng,
   OperationalExpense,
   ScheduledJob,
@@ -571,6 +572,71 @@ export const ARGENTINA_CITIES_CATALOG: ArgentinaCitySuggestion[] = [
     defaultAddress: 'Av. Roca 600, Puerto Madryn',
     coordinates: { lat: -42.7692, lng: -65.0385 },
   },
+  // Colombia & Latinoamérica (Soporte Internacional Multi-tenant)
+  {
+    id: 'co-bogota',
+    city: 'Bogotá',
+    province: 'Cundinamarca, Colombia',
+    fullName: 'Bogotá, Colombia',
+    defaultAddress: 'Carrera 7 # 72-10, Bogotá',
+    coordinates: { lat: 4.711, lng: -74.0721 },
+  },
+  {
+    id: 'co-medellin',
+    city: 'Medellín',
+    province: 'Antioquia, Colombia',
+    fullName: 'Medellín, Colombia',
+    defaultAddress: 'El Poblado, Cra 43A, Medellín',
+    coordinates: { lat: 6.2442, lng: -75.5812 },
+  },
+  {
+    id: 'co-cali',
+    city: 'Cali',
+    province: 'Valle del Cauca, Colombia',
+    fullName: 'Cali, Colombia',
+    defaultAddress: 'Av. 6 Norte # 24N, Cali',
+    coordinates: { lat: 3.4516, lng: -76.532 },
+  },
+  {
+    id: 'co-barranquilla',
+    city: 'Barranquilla',
+    province: 'Atlántico, Colombia',
+    fullName: 'Barranquilla, Colombia',
+    defaultAddress: 'Calle 72 # 54-20, Barranquilla',
+    coordinates: { lat: 10.9685, lng: -74.7813 },
+  },
+  {
+    id: 'co-cartagena',
+    city: 'Cartagena',
+    province: 'Bolívar, Colombia',
+    fullName: 'Cartagena, Colombia',
+    defaultAddress: 'Av. San Martín, Bocagrande, Cartagena',
+    coordinates: { lat: 10.391, lng: -75.4794 },
+  },
+  {
+    id: 'co-bucaramanga',
+    city: 'Bucaramanga',
+    province: 'Santander, Colombia',
+    fullName: 'Bucaramanga, Colombia',
+    defaultAddress: 'Carrera 27 # 36, Bucaramanga',
+    coordinates: { lat: 7.1254, lng: -73.1198 },
+  },
+  {
+    id: 'uy-montevideo',
+    city: 'Montevideo',
+    province: 'Montevideo, Uruguay',
+    fullName: 'Montevideo, Uruguay',
+    defaultAddress: 'Rambla República del Perú 1100, Montevideo',
+    coordinates: { lat: -34.9011, lng: -56.1645 },
+  },
+  {
+    id: 'cl-santiago',
+    city: 'Santiago de Chile',
+    province: 'Región Metropolitana, Chile',
+    fullName: 'Santiago, Chile',
+    defaultAddress: 'Av. Providencia 1200, Santiago',
+    coordinates: { lat: -33.4489, lng: -70.6693 },
+  },
 ];
 
 // Avenidas y calles universales presentes en casi todas las localidades de Argentina
@@ -641,6 +707,96 @@ export const NEIGHBORHOOD_COORDINATES: Record<string, LatLng> = {
   'Rufino (Ciudad)': { lat: -34.2642, lng: -62.7125 },
 };
 
+function createGardenPhotoDataUri(
+  stage: 'antes' | 'despues',
+  title: string,
+  subtitle: string,
+  variant: 'quinta' | 'terreno' | 'casa' = 'quinta'
+): string {
+  const isBefore = stage === 'antes';
+  const skyStart = isBefore ? '#0f291e' : '#064e3b';
+  const skyEnd = isBefore ? '#1e3a2f' : '#047857';
+  const lawnStripes = !isBefore
+    ? `<path d="M0 230 L160 155 L230 155 L95 230 Z" fill="#10b981" opacity="0.28"/>
+       <path d="M160 230 L285 155 L355 155 L265 230 Z" fill="#10b981" opacity="0.28"/>
+       <path d="M330 230 L420 155 L480 155 L430 230 Z" fill="#10b981" opacity="0.28"/>
+       <line x1="0" y1="168" x2="480" y2="168" stroke="#6ee7b7" stroke-opacity="0.35" stroke-width="1.5" stroke-dasharray="6 4"/>`
+    : `<path d="M22 225 Q30 140 42 128 M55 225 Q46 135 64 118 M92 225 Q108 142 96 122 M135 225 Q125 130 145 115 M178 225 Q195 136 184 120 M220 225 Q210 128 232 112 M268 225 Q284 140 272 124 M315 225 Q300 132 325 116 M362 225 Q376 138 368 121 M410 225 Q398 134 422 118 M448 225 Q460 142 452 126" stroke="#84cc16" stroke-width="3.2" stroke-linecap="round" opacity="0.72" fill="none"/>
+       <path d="M38 225 Q50 155 34 140 M112 225 Q124 150 116 134 M198 225 Q188 148 206 132 M290 225 Q304 146 288 130 M385 225 Q374 152 392 135" stroke="#eab308" stroke-width="2.4" stroke-linecap="round" opacity="0.65" fill="none"/>`;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 270" width="480" height="270">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="${skyStart}"/>
+        <stop offset="100%" stop-color="${skyEnd}"/>
+      </linearGradient>
+      <linearGradient id="turf" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${isBefore ? '#365314' : '#059669'}"/>
+        <stop offset="100%" stop-color="${isBefore ? '#1a2e05' : '#065f46'}"/>
+      </linearGradient>
+    </defs>
+    <rect width="480" height="270" fill="url(#sky)"/>
+    <circle cx="${variant === 'quinta' ? '395' : '95'}" cy="56" r="28" fill="#fde047" opacity="0.22"/>
+    <path d="M0 158 Q130 142 260 154 T480 150 L480 270 L0 270 Z" fill="url(#turf)"/>
+    ${lawnStripes}
+    <rect x="0" y="212" width="480" height="58" fill="#020617" opacity="0.78"/>
+    <text x="18" y="236" fill="#f8fafc" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="700">${title}</text>
+    <text x="18" y="255" fill="#94a3b8" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500">${subtitle}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+export const SAMPLE_GARDEN_PHOTOS = {
+  quintaAntes1: createGardenPhotoDataUri(
+    'antes',
+    'Parque principal · Pasto alto 22 cm',
+    'Estado previo al ingreso con tractor y motoguadaña',
+    'quinta'
+  ),
+  quintaAntes2: createGardenPhotoDataUri(
+    'antes',
+    'Cerco perimetral y sector pileta',
+    'Bordes crecidos antes del perfilado con tanza 3.0mm',
+    'quinta'
+  ),
+  quintaDespues1: createGardenPhotoDataUri(
+    'despues',
+    'Parque cortado en franjas a 5 cm',
+    'Terminación pareja con tractor y soplado de galería',
+    'quinta'
+  ),
+  quintaDespues2: createGardenPhotoDataUri(
+    'despues',
+    'Bordeado de pileta y cerco despejado',
+    'Vereda y solárium limpios listos para entrega',
+    'quinta'
+  ),
+  terrenoAntes1: createGardenPhotoDataUri(
+    'antes',
+    'Lote con maleza alta y cardos (45 cm)',
+    'Estado inicial antes del desmalezado pesado',
+    'terreno'
+  ),
+  terrenoDespues1: createGardenPhotoDataUri(
+    'despues',
+    'Lote desmalezado y cuneta limpia',
+    'Corte integral con cuchilla 3 puntas y despeje de frente',
+    'terreno'
+  ),
+  casaAntes1: createGardenPhotoDataUri(
+    'antes',
+    'Jardín delantero y vereda sin bordear',
+    'Césped crecido tras lluvias de la semana',
+    'casa'
+  ),
+  casaDespues1: createGardenPhotoDataUri(
+    'despues',
+    'Jardín residencial cortado y embolsado',
+    'Canteros perfilados y vereda barrida sin restos',
+    'casa'
+  ),
+};
+
 export const INITIAL_PROPERTIES: ClientProperty[] = [
   {
     id: 'prop-1',
@@ -665,6 +821,72 @@ export const INITIAL_PROPERTIES: ClientProperty[] = [
     nextCutDate: D_TODAY,
     estimatedMinutes: 75,
     active: true,
+    photoGallery: [
+      {
+        id: 'ph-prop1-antes-1',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.quintaAntes1,
+        caption: 'Antes: Parque principal antes del corte semanal (850 m²)',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-prop1-antes-2',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.quintaAntes2,
+        caption: 'Antes: Sector pileta y cerco perimetral sin bordear',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-prop1-despues-1',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.quintaDespues1,
+        caption: 'Después: Parque cortado en franjas con tractor y autopropulsada',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-prop1-despues-2',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.quintaDespues2,
+        caption: 'Después: Bordeado de pileta y galería soplada',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+    ],
   },
   {
     id: 'prop-2',
@@ -689,6 +911,40 @@ export const INITIAL_PROPERTIES: ClientProperty[] = [
     nextCutDate: D_TODAY,
     estimatedMinutes: 85,
     active: true,
+    photoGallery: [
+      {
+        id: 'ph-prop2-antes-1',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.terrenoAntes1,
+        caption: 'Antes: Lote con maleza alta antes del desmalezado',
+        takenAt: '2026-10-18',
+        jobId: 'job-hist-09',
+        invoiceId: 'inv-2026-0009',
+        invoiceNumber: 'REC-2026-0009',
+        propertyId: 'prop-2',
+        clientName: 'Loteo San Martín (Terreno en Venta)',
+        address: 'Av. Jorge Newbery 1850',
+        neighborhood: 'Venado Tuerto - Villa Casey',
+        areaSqm: 620,
+        amount: 42000,
+      },
+      {
+        id: 'ph-prop2-despues-1',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.terrenoDespues1,
+        caption: 'Después: Terreno desmalezado y cuneta despejada',
+        takenAt: '2026-10-18',
+        jobId: 'job-hist-09',
+        invoiceId: 'inv-2026-0009',
+        invoiceNumber: 'REC-2026-0009',
+        propertyId: 'prop-2',
+        clientName: 'Loteo San Martín (Terreno en Venta)',
+        address: 'Av. Jorge Newbery 1850',
+        neighborhood: 'Venado Tuerto - Villa Casey',
+        areaSqm: 620,
+        amount: 42000,
+      },
+    ],
   },
   {
     id: 'prop-3',
@@ -713,6 +969,40 @@ export const INITIAL_PROPERTIES: ClientProperty[] = [
     nextCutDate: D_TODAY,
     estimatedMinutes: 45,
     active: true,
+    photoGallery: [
+      {
+        id: 'ph-prop3-antes-1',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.casaAntes1,
+        caption: 'Antes: Jardín delantero antes del corte y bordeado',
+        takenAt: '2026-10-18',
+        jobId: 'job-hist-08',
+        invoiceId: 'inv-2026-0008',
+        invoiceNumber: 'REC-2026-0008',
+        propertyId: 'prop-3',
+        clientName: 'Mariana Salgado',
+        address: 'Chacabuco 920',
+        neighborhood: 'Venado Tuerto - Centro',
+        areaSqm: 280,
+        amount: 20000,
+      },
+      {
+        id: 'ph-prop3-despues-1',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.casaDespues1,
+        caption: 'Después: Jardín cortado, canteros perfilados y embolsado completo',
+        takenAt: '2026-10-18',
+        jobId: 'job-hist-08',
+        invoiceId: 'inv-2026-0008',
+        invoiceNumber: 'REC-2026-0008',
+        propertyId: 'prop-3',
+        clientName: 'Mariana Salgado',
+        address: 'Chacabuco 920',
+        neighborhood: 'Venado Tuerto - Centro',
+        areaSqm: 280,
+        amount: 20000,
+      },
+    ],
   },
   {
     id: 'prop-4',
@@ -865,6 +1155,9 @@ export const INITIAL_TODAY_JOBS: ScheduledJob[] = [
     startedAt: '08:00',
     completedAt: '09:15',
     invoiceId: 'inv-2026-0014',
+    photoUrl: SAMPLE_GARDEN_PHOTOS.quintaDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.quintaAntes1, SAMPLE_GARDEN_PHOTOS.quintaAntes2],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.quintaDespues1, SAMPLE_GARDEN_PHOTOS.quintaDespues2],
   },
   {
     id: 'job-102',
@@ -1192,6 +1485,75 @@ export const INITIAL_INVOICES: InvoiceRecord[] = [
     paymentMethod: 'Transferencia',
     paidAt: D_TODAY,
     nextScheduledDate: D_PLUS_7,
+    photoUrl: SAMPLE_GARDEN_PHOTOS.quintaDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.quintaAntes1, SAMPLE_GARDEN_PHOTOS.quintaAntes2],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.quintaDespues1, SAMPLE_GARDEN_PHOTOS.quintaDespues2],
+    photos: [
+      {
+        id: 'ph-inv14-antes-1',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.quintaAntes1,
+        caption: 'Antes: Parque principal antes del corte semanal (850 m²)',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-inv14-antes-2',
+        stage: 'antes',
+        url: SAMPLE_GARDEN_PHOTOS.quintaAntes2,
+        caption: 'Antes: Sector pileta y cerco perimetral sin bordear',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-inv14-despues-1',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.quintaDespues1,
+        caption: 'Después: Parque cortado en franjas con tractor y autopropulsada',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+      {
+        id: 'ph-inv14-despues-2',
+        stage: 'despues',
+        url: SAMPLE_GARDEN_PHOTOS.quintaDespues2,
+        caption: 'Después: Bordeado de pileta y galería soplada',
+        takenAt: D_TODAY,
+        jobId: 'job-101',
+        invoiceId: 'inv-2026-0014',
+        invoiceNumber: 'REC-2026-0014',
+        propertyId: 'prop-1',
+        clientName: 'Familia Echeverría',
+        address: 'Los Aromos 340',
+        neighborhood: 'Venado Tuerto - Los Robles / Country',
+        areaSqm: 850,
+        amount: 38000,
+      },
+    ],
   },
   {
     id: 'inv-2026-0013',
@@ -1230,6 +1592,9 @@ export const INITIAL_INVOICES: InvoiceRecord[] = [
     paymentMethod: 'MercadoPago',
     paidAt: '2026-10-25',
     nextScheduledDate: '2026-11-01',
+    photoUrl: SAMPLE_GARDEN_PHOTOS.casaDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.casaAntes1],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.casaDespues1],
   },
   {
     id: 'inv-2026-0011',
@@ -1266,6 +1631,9 @@ export const INITIAL_INVOICES: InvoiceRecord[] = [
     tasksCompleted: ['Corte de frente de galpón y balanza', 'Bordeado tejido'],
     status: 'Pendiente',
     nextScheduledDate: '2026-11-05',
+    photoUrl: SAMPLE_GARDEN_PHOTOS.terrenoDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.terrenoAntes1],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.terrenoDespues1],
   },
   {
     id: 'inv-2026-0009',
@@ -1285,6 +1653,9 @@ export const INITIAL_INVOICES: InvoiceRecord[] = [
     paymentMethod: 'Transferencia',
     paidAt: '2026-10-19',
     nextScheduledDate: '2026-11-01',
+    photoUrl: SAMPLE_GARDEN_PHOTOS.terrenoDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.terrenoAntes1],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.terrenoDespues1],
   },
   {
     id: 'inv-2026-0008',
@@ -1304,6 +1675,9 @@ export const INITIAL_INVOICES: InvoiceRecord[] = [
     paymentMethod: 'Efectivo',
     paidAt: '2026-10-18',
     nextScheduledDate: '2026-11-01',
+    photoUrl: SAMPLE_GARDEN_PHOTOS.casaDespues1,
+    beforePhotos: [SAMPLE_GARDEN_PHOTOS.casaAntes1],
+    afterPhotos: [SAMPLE_GARDEN_PHOTOS.casaDespues1],
   },
   {
     id: 'inv-2026-0007',

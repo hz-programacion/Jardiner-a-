@@ -252,11 +252,16 @@ export function resolveBaseLocationFromCityInput(
     }
   }
 
+  const isColombia = norm.includes('colombia') || norm.includes('bogota') || norm.includes('medellin');
+  const fallbackCoords = isColombia
+    ? { lat: 4.711, lng: -74.0721 }
+    : { lat: -33.7456, lng: -61.9688 };
+
   return {
-    name: `Base Operativa (${clean || 'Venado Tuerto, Santa Fe'})`,
-    city: clean || 'Venado Tuerto, Santa Fe',
-    address: clean ? `Centro, ${clean.split(',')[0].trim()}` : 'Av. Casey 450, Venado Tuerto',
-    coordinates: { lat: -33.7456, lng: -61.9688 },
+    name: `Base Operativa (${clean || (isColombia ? 'Bogotá, Colombia' : 'Venado Tuerto, Santa Fe')})`,
+    city: clean || (isColombia ? 'Bogotá, Colombia' : 'Venado Tuerto, Santa Fe'),
+    address: clean ? `Centro, ${clean.split(',')[0].trim()}` : isColombia ? 'Carrera 7, Bogotá' : 'Av. Casey 450, Venado Tuerto',
+    coordinates: fallbackCoords,
     source: 'manual',
   };
 }

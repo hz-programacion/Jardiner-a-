@@ -28,6 +28,45 @@ export interface BaseLocationConfig {
   updatedAt?: string;
 }
 
+export type JobPhotoStage = 'antes' | 'despues';
+
+export interface JobPhotoItem {
+  id: string;
+  stage: JobPhotoStage; // 'antes' | 'despues'
+  url: string;
+  caption?: string;
+  takenAt: string; // YYYY-MM-DD
+  jobId?: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  propertyId: string;
+  clientName: string;
+  address: string;
+  neighborhood?: string;
+  areaSqm?: number;
+  amount?: number;
+}
+
+export interface BeforeAfterVisitGroup {
+  visitKey: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  jobId?: string;
+  propertyId: string;
+  clientName: string;
+  address: string;
+  neighborhood?: string;
+  propertyType?: PropertyType;
+  areaSqm: number;
+  date: string;
+  amount: number;
+  status?: PaymentStatus;
+  tasksCompleted: string[];
+  beforePhotos: JobPhotoItem[];
+  afterPhotos: JobPhotoItem[];
+  totalPhotos: number;
+}
+
 export interface ClientProperty {
   id: string;
   clientName: string;
@@ -47,6 +86,7 @@ export interface ClientProperty {
   nextCutDate: string;
   estimatedMinutes: number;
   active: boolean;
+  photoGallery?: JobPhotoItem[];
 }
 
 export interface ScheduledJob {
@@ -75,6 +115,9 @@ export interface ScheduledJob {
   legDistanceKm?: number;
   legDurationMin?: number;
   photoUrl?: string;
+  beforePhotos?: string[];
+  afterPhotos?: string[];
+  photos?: JobPhotoItem[];
 }
 
 export interface CalendarDayCell {
@@ -108,6 +151,9 @@ export interface InvoiceRecord {
   paidAt?: string;
   nextScheduledDate: string;
   photoUrl?: string;
+  beforePhotos?: string[];
+  afterPhotos?: string[];
+  photos?: JobPhotoItem[];
   actualDurationMinutes?: number;
 }
 
@@ -238,6 +284,9 @@ export interface RegisteredTenantSummary {
   displayName: string;
   businessName: string;
   city: string;
+  phone?: string;
+  requestMessage?: string;
+  adminNotes?: string;
   registeredAt: string;
   updatedAt?: string;
   isApproved: boolean;

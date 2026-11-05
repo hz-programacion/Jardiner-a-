@@ -34,6 +34,10 @@ import {
   updateInvoiceRecordInState,
   updateOperationalExpenseInState,
   updateScheduledJobInState,
+  calculateTwoStrokeMix,
+  calculateFieldJobSurcharges,
+  calculateDualTierQuote,
+  getOverdueClientsForCut,
 } from './lawnLogic';
 import {
   createBlankTenantWorkspace,
@@ -43,6 +47,7 @@ import {
   normalizeTenantLicenseConfig,
   PENDING_APPROVAL_BLOCK_MESSAGE,
   PRIMARY_ADMIN_EMAIL,
+  resolveBaseLocationFromCityInput,
 } from './saasLogic';
 import {
   BASE_DEPOT,
@@ -54,6 +59,12 @@ import {
   INITIAL_PROPERTIES,
   INITIAL_TODAY_JOBS,
 } from '../data/seedData';
+import {
+  buildSpokenClientSummary,
+  buildSpokenFinanceSummary,
+  buildSpokenJobSummary,
+  buildSpokenRouteBriefing,
+} from './voiceAccessibility';
 
 const TODAY_ISO = getTodayIsoLocal();
 const TOMORROW_ISO = getLocalDateOffset(1);
@@ -99,7 +110,7 @@ test('Administrator Manual Approval Access Control sets pending state for normal
     email: 'jardinero@cordoba.com',
     displayName: 'Juan Pérez',
     businessName: 'Parques Córdoba',
-    customCityInput: 'Venado',
+    cityPresetKey: 'Venado Tuerto, Santa Fe',
   });
   assert.equal(blankUserWorkspace.isApproved, false);
   assert.equal(blankUserWorkspace.approvalStatus, 'pending');
@@ -610,3 +621,274 @@ test('hasValidCustomMercadoPagoLink and normalizeTenantLicenseConfig prevent bro
   assert.equal(normalized.sellerCbu, '0000003100084920114502');
 });
 
+test('resolveBaseLocationFromCityInput correctly anticipates international locations such as Colombia', () => {
+  const bogotaLoc = resolveBaseLocationFromCityInput('Bogotá, Cundinamarca, Colombia');
+  assert.equal(bogotaLoc.city, 'Bogotá, Colombia');
+  assert.equal(bogotaLoc.coordinates.lat, 4.711);
+  assert.equal(bogotaLoc.coordinates.lng, -74.0721);
+
+  const rosarioLoc = resolveBaseLocationFromCityInput('Rosario');
+  assert.equal(rosarioLoc.city, 'Rosario, Santa Fe');
+  assert.equal(rosarioLoc.coordinates.lat, -32.9442);
+});
+
+test('voiceAccessibility helpers generate clear Spanish spoken summaries for jobs, routes, finances, and clients', () => {
+  const sampleJob = INITIAL_TODAY_JOBS[1];
+  const jobSpeech = buildSpokenJobSummary(sampleJob);
+  assert.ok(jobSpeech.includes(sampleJob.clientName));
+  assert.ok(jobSpeech.includes(sampleJob.address));
+  assert.ok(jobSpeech.includes('pesos'));
+
+  const routeSpeech = buildSpokenRouteBriefing({
+    dateStr: TODAY_ISO,
+    totalJobs: 5,
+    completedJobs: 1,
+    pendingJobs: 4,
+    expectedRevenue: 195500,
+    nextJob: sampleJob,
+  });
+  assert.ok(routeSpeech.includes('5 trabajos programados'));
+  assert.ok(routeSpeech.includes('Faltan 4 por hacer'));
+  assert.ok(routeSpeech.includes(sampleJob.clientName));
+
+  const financeSpeech = buildSpokenFinanceSummary({
+    periodLabel: 'Últimos 30 Días',
+    totalCobrado: 280000,
+    totalGastos: 45000,
+    gananciaNeta: 235000,
+    porCobrar: 32000,
+  });
+  assert.ok(financeSpeech.includes('Últimos 30 Días'));
+  assert.ok(financeSpeech.includes('ganancia limpia en mano'));
+  assert.ok(financeSpeech.includes('Pendiente por cobrar en la calle'));
+
+  const sampleClient = INITIAL_PROPERTIES[0];
+  const clientSpeech = buildSpokenClientSummary(sampleClient, 15000);
+  assert.ok(clientSpeech.includes(sampleClient.clientName));
+  assert.ok(clientSpeech.includes('Tiene una deuda pendiente'));
+});
+
+test('calculateTwoStrokeMix, calculateFieldJobSurcharges, calculateDualTierQuote, and getOverdueClientsForCut compute accurate lawn-cutter field metrics', () => {
+  const mix5L = calculateTwoStrokeMix(5, '50:1');
+  assert.equal(mix5L.oilMilliliters, 100);
+  assert.equal(mix5L.oilCaps20ml, 5);
+  assert.ok(mix5L.estimatedCoverageSqm > 1000);
+
+  const mix40 = calculateTwoStrokeMix(2, '40:1');
+  assert.equal(mix40.oilMilliliters, 50);
+
+  const surcharges = calculateFieldJobSurcharges(20000, 350, 45, [
+    'pasto_pasado',
+    'embolsado_extra',
+  ]);
+  assert.equal(surcharges.surchargeAmount, 8500);
+  assert.equal(surcharges.finalPrice, 28500);
+  assert.ok(surcharges.netPocketProfit > 20000);
+  assert.equal(surcharges.addedTasks.length, 2);
+
+  const dualQuote = calculateDualTierQuote({
+    areaSqm: 450,
+    propertyType: 'Casa',
+    grassCondition: 'Alto',
+    includesBagging: true,
+    extraTasksCount: 1,
+    travelFee: 0,
+  });
+  assert.ok(dualQuote.singleCutPrice > dualQuote.biweeklyCutPrice);
+  assert.equal(dualQuote.monthlyAbonoTotal, dualQuote.biweeklyCutPrice * 2);
+  assert.ok(dualQuote.savingsPerCutForClient >= 500);
+  assert.ok(dualQuote.netHourlyProfitSingle > 0);
+
+  const overdueList = getOverdueClientsForCut(INITIAL_PROPERTIES, TODAY_ISO, []);
+  assert.ok(Array.isArray(overdueList));
+  assert.ok(overdueList.length > 0);
+  assert.ok(overdueList[0].whatsappReminderText.includes('Hola'));
+});
+
+test('getWorkOrdersSkeletonDescriptors bounds skeleton card count and provides contextual status labels', async () => {
+  const { getWorkOrdersSkeletonDescriptors } = await import('./lawnLogic');
+  const filterSkeleton = getWorkOrdersSkeletonDescriptors(4, 'filter');
+  assert.equal(filterSkeleton.count, 4);
+  assert.equal(filterSkeleton.items.length, 4);
+  assert.equal(filterSkeleton.items[0].showExpandedInspector, true);
+  assert.equal(filterSkeleton.items[1].showExpandedInspector, false);
+  assert.ok(filterSkeleton.statusLabel.includes('filtro'));
+
+  const minBounded = getWorkOrdersSkeletonDescriptors(0, 'search');
+  assert.equal(minBounded.count, 3);
+  assert.ok(minBounded.statusLabel.includes('Filtrando'));
+
+  const maxBounded = getWorkOrdersSkeletonDescriptors(12, 'optimize');
+  assert.equal(maxBounded.count, 5);
+  assert.ok(maxBounded.statusLabel.includes('GPS'));
+});
+
+test('getJobGardeningEquipmentProfile recommends motoguadaña specs, terrain badges, and 2T fuel mix estimates', async () => {
+  const { getJobGardeningEquipmentProfile } = await import('./lawnLogic');
+
+  const heavyQuinta = getJobGardeningEquipmentProfile(1200, 'Quinta', [
+    'Corte de césped',
+    'Desmalezado con motoguadaña',
+  ]);
+  assert.equal(heavyQuinta.equipmentCode, 'motoguadana_pesada');
+  assert.ok(heavyQuinta.equipmentLabel.includes('Motoguadaña 2T'));
+  assert.ok(heavyQuinta.trimmerHeadSpec.includes('3.0mm'));
+  assert.ok(heavyQuinta.fuelMixEstimateMl >= 1000);
+
+  const mediumGarden = getJobGardeningEquipmentProfile(380, 'Casa', [
+    'Corte general',
+    'Bordeo de canteros',
+  ]);
+  assert.equal(mediumGarden.equipmentCode, 'combo_parquizacion');
+  assert.ok(mediumGarden.equipmentLabel.includes('Motoguadaña Bordeo'));
+
+  const compactPatio = getJobGardeningEquipmentProfile(140, 'Casa', [
+    'Corte simple',
+  ]);
+  assert.equal(compactPatio.equipmentCode, 'corte_residencial');
+  assert.ok(compactPatio.fuelMixEstimateMl >= 120);
+});
+
+test('completeJobAndCreateInvoice, appendJobPhotosToClientProperty, getClientBeforeAfterGallery, and collectBillingBeforeAfterGallery manage multiple before and after photos', async () => {
+  const {
+    appendJobPhotosToClientProperty,
+    getClientBeforeAfterGallery,
+    collectBillingBeforeAfterGallery,
+  } = await import('./lawnLogic');
+
+  const job = INITIAL_TODAY_JOBS[1];
+  const prop = INITIAL_PROPERTIES.find((p) => p.id === job.propertyId) || INITIAL_PROPERTIES[0];
+  const beforeUrls = ['data:image/svg+xml;utf8,antes-1', 'data:image/svg+xml;utf8,antes-2'];
+  const afterUrls = ['data:image/svg+xml;utf8,despues-1', 'data:image/svg+xml;utf8,despues-2', 'data:image/svg+xml;utf8,despues-3'];
+
+  const { updatedJob, invoice } = completeJobAndCreateInvoice(
+    job,
+    true,
+    'Transferencia',
+    TODAY_ISO,
+    99,
+    undefined,
+    55,
+    beforeUrls,
+    afterUrls
+  );
+
+  assert.deepEqual(updatedJob.beforePhotos, beforeUrls);
+  assert.deepEqual(updatedJob.afterPhotos, afterUrls);
+  assert.equal(invoice.beforePhotos?.length, 2);
+  assert.equal(invoice.afterPhotos?.length, 3);
+  assert.equal(invoice.photos?.length, 5);
+  assert.equal(invoice.photoUrl, 'data:image/svg+xml;utf8,despues-1');
+
+  const updatedProp = appendJobPhotosToClientProperty(prop, invoice, beforeUrls, afterUrls);
+  assert.ok((updatedProp.photoGallery?.length || 0) >= 5);
+
+  const clientGallery = getClientBeforeAfterGallery(updatedProp, [invoice, ...INITIAL_INVOICES]);
+  assert.ok(clientGallery.beforeCount >= 2);
+  assert.ok(clientGallery.afterCount >= 3);
+  assert.ok(clientGallery.visitGroups.length >= 1);
+
+  const billingAll = collectBillingBeforeAfterGallery(
+    [invoice, ...INITIAL_INVOICES],
+    [updatedProp, ...INITIAL_PROPERTIES],
+    'todos',
+    ''
+  );
+  assert.ok(billingAll.totalVisitsWithPhotos >= 2);
+  assert.ok(billingAll.totalBeforePhotos >= 2);
+  assert.ok(billingAll.totalAfterPhotos >= 3);
+  assert.ok(billingAll.completeComparisonCount >= 1);
+
+  const billingBeforeOnly = collectBillingBeforeAfterGallery(
+    [invoice, ...INITIAL_INVOICES],
+    [updatedProp, ...INITIAL_PROPERTIES],
+    'antes',
+    job.clientName
+  );
+  assert.ok(billingBeforeOnly.visitGroups.length >= 1);
+  assert.ok(billingBeforeOnly.filteredPhotos.every((p) => p.stage === 'antes'));
+});
+
+test('addTaskAndSurchargeToScheduledJob appends task and increments price without duplicating existing tasks', async () => {
+  const { addTaskAndSurchargeToScheduledJob } = await import('./lawnLogic');
+  const sampleJob = INITIAL_TODAY_JOBS[1];
+  const updatedList = addTaskAndSurchargeToScheduledJob(
+    INITIAL_TODAY_JOBS,
+    sampleJob.id,
+    'Poda y perfilado de cerco vivo perimetral',
+    18000
+  );
+  const modified = updatedList.find((j) => j.id === sampleJob.id)!;
+  assert.ok(modified.tasks.includes('Poda y perfilado de cerco vivo perimetral'));
+  assert.equal(modified.price, sampleJob.price + 18000);
+
+  // Calling again with same task should not duplicate or double-charge
+  const secondPass = addTaskAndSurchargeToScheduledJob(
+    updatedList,
+    sampleJob.id,
+    'Poda y perfilado de cerco vivo perimetral',
+    18000
+  );
+  const afterSecond = secondPass.find((j) => j.id === sampleJob.id)!;
+  assert.equal(afterSecond.tasks.length, modified.tasks.length);
+  assert.equal(afterSecond.price, modified.price);
+});
+
+test('optimizeRouteWith2Opt, computeAgronomicCuttingWindow, generateCryptographicReceiptSeal, and checkRateLimit work accurately', async () => {
+  const {
+    optimizeRouteWith2Opt,
+    computeAgronomicCuttingWindow,
+    generateCryptographicReceiptSeal,
+    checkRateLimit,
+  } = await import('./backendEngine');
+
+  // 1. 2-Opt TSP Route Optimizer
+  const scrambledJobs = [...INITIAL_TODAY_JOBS].reverse();
+  const optResult = optimizeRouteWith2Opt(BASE_DEPOT.coordinates, scrambledJobs);
+  assert.equal(optResult.optimizedJobs.length, INITIAL_TODAY_JOBS.length);
+  assert.ok(optResult.optimizedDistanceKm <= optResult.initialDistanceKm);
+  assert.equal(optResult.algorithmUsed, '2-Opt + Nearest-Neighbor TSP');
+
+  // 2. Agronomic Cutting Window Advisory
+  const sunnyAdvisory = computeAgronomicCuttingWindow(
+    '2026-11-04',
+    'Venado Tuerto, Santa Fe',
+    27,
+    'Soleado'
+  );
+  assert.equal(sunnyAdvisory.foliarMoistureRisk, 'Bajo');
+  assert.ok(sunnyAdvisory.suitabilityScore >= 85);
+
+  const rainyAdvisory = computeAgronomicCuttingWindow(
+    '2026-11-05',
+    'Venado Tuerto, Santa Fe',
+    21,
+    'Alerta Lluvia'
+  );
+  assert.equal(rainyAdvisory.foliarMoistureRisk, 'Alto');
+  assert.ok(rainyAdvisory.suitabilityScore < 50);
+
+  // 3. Cryptographic Receipt Seal
+  const seal1 = generateCryptographicReceiptSeal({
+    invoiceId: 'inv-1001',
+    clientName: 'Familia Echeverría',
+    amount: 38000,
+    date: '2026-11-04',
+  });
+  const seal2 = generateCryptographicReceiptSeal({
+    invoiceId: 'inv-1001',
+    clientName: 'Familia Echeverría',
+    amount: 38000,
+    date: '2026-11-04',
+  });
+  assert.equal(seal1.sealCode, seal2.sealCode);
+  assert.ok(seal1.sealCode.startsWith('PP-'));
+
+  // 4. Token-Bucket Rate Limiter
+  const r1 = checkRateLimit('test-ip-unit', 2, 1, 1000);
+  const r2 = checkRateLimit('test-ip-unit', 2, 1, 1000);
+  const r3 = checkRateLimit('test-ip-unit', 2, 1, 1000);
+  assert.equal(r1.allowed, true);
+  assert.equal(r2.allowed, true);
+  assert.equal(r3.allowed, false);
+});

@@ -3,6 +3,7 @@ import {
   BarChart3,
   Calculator,
   Calendar,
+  Camera,
   CheckCircle2,
   ClipboardCopy,
   Clock,
@@ -25,7 +26,14 @@ import {
   TrendingUp,
   Upload,
   UserPlus,
+  Volume2,
+  Wallet,
   Wrench,
+  ArrowUpRight,
+  ArrowDownRight,
+  Sparkles,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 import {
   BusinessProfileConfig,
@@ -34,28 +42,42 @@ import {
   EquipmentItem,
   GrassCondition,
   InvoiceRecord,
+  JobPhotoItem,
   OperationalExpense,
   PeriodFilter,
   PropertyType,
   ScheduledJob,
 } from '../types/lawn';
 import {
+  BillingGalleryStageFilter,
+  calculateDualTierQuote,
   calculateFinancialSummary,
   calculateSuggestedPrice,
+  collectBillingBeforeAfterGallery,
   computeDetailedAnalytics,
+  extractInvoicePhotoItems,
   filterRecordsByPeriod,
+  getClientBeforeAfterGallery,
   getClientCutTimeHistory,
   getClientPriceHistory,
+  getOverdueClientsForCut,
   getTodayIsoLocal,
 } from '../utils/lawnLogic';
+import {
+  buildSpokenClientSummary,
+  buildSpokenFinanceSummary,
+  speakTextAloud,
+} from '../utils/voiceAccessibility';
 import { NEIGHBORHOOD_COORDINATES } from '../data/seedData';
 import { StreetAddressAutocomplete } from './StreetAddressAutocomplete';
+import { BeforeAfterSlider } from './BeforeAfterSlider';
 
 interface ClientsViewProps {
   properties: ClientProperty[];
   todayJobs: ScheduledJob[];
   invoices: InvoiceRecord[];
   paymentAlias?: string;
+  isEasyAccessMode?: boolean;
   onOpenNewClient: () => void;
   onEditClient: (property: ClientProperty) => void;
   onViewClientHistory: (property: ClientProperty) => void;
@@ -72,6 +94,7 @@ export function ClientsView({
   todayJobs,
   invoices,
   paymentAlias = 'mi.alias.cobro',
+  isEasyAccessMode = false,
   onOpenNewClient,
   onEditClient,
   onViewClientHistory,
@@ -85,9 +108,30 @@ export function ClientsView({
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('Todos');
   const [filterZone, setFilterZone] = useState<string>('Todas');
-  const [filterBalance, setFilterBalance] = useState<'todos' | 'con_deuda'>('todos');
+  const [filterBalance, setFilterBalance] = useState<'todos' | 'con_deuda' | 'vencidos'>('todos');
   const [sortBy, setSortBy] = useState<'nombre' | 'tarifa_mayor' | 'proximo_corte'>('nombre');
   const [onlyOutdated, setOnlyOutdated] = useState<boolean>(false);
+
+  const todayIso = useMemo(() => getTodayIsoLocal(), []);
+  const overdueAlerts = useMemo(
+    () => getOverdueClientsForCut(properties, todayIso, todayJobs),
+    [properties, todayIso, todayJobs]
+  );
+  const overduePropertyIds = useMemo(
+    () => new Set(overdueAlerts.map((a) => a.property.id)),
+    [overdueAlerts]
+  );
+
+  const availableZones = useMemo(() => {
+    const zones = Array.from(
+      new Set(
+        properties
+          .map((p) => (p.neighborhood || '').trim())
+          .filter((z) => z.length > 0)
+      )
+    );
+    return zones.sort((a, b) => a.localeCompare(b, 'es'));
+  }, [properties]);
 
   const filtered = useMemo(() => {
     const matching = properties.filter((prop) => {
@@ -99,15 +143,16 @@ export function ClientsView({
         filterType === 'Todos' || prop.propertyType === filterType;
       const matchesZone =
         filterZone === 'Todas' ||
-        (filterZone === 'Venado Tuerto'
-          ? prop.neighborhood.toLowerCase().includes('venado tuerto')
-          : !prop.neighborhood.toLowerCase().includes('venado tuerto'));
+        (prop.neighborhood || '').toLowerCase() === filterZone.toLowerCase();
 
       if (!matchesSearch || !matchesType || !matchesZone) return false;
 
       if (filterBalance === 'con_deuda') {
         const history = getClientPriceHistory(prop.id, prop.clientName, invoices);
         return history.pendingBalance > 0;
+      }
+      if (filterBalance === 'vencidos') {
+        return overduePropertyIds.has(prop.id);
       }
       return true;
     });
@@ -117,146 +162,197 @@ export function ClientsView({
       if (sortBy === 'proximo_corte') return a.nextCutDate.localeCompare(b.nextCutDate);
       return a.clientName.localeCompare(b.clientName, 'es');
     });
-  }, [properties, searchQuery, filterType, filterZone, filterBalance, sortBy, invoices]);
+  }, [
+    properties,
+    searchQuery,
+    filterType,
+    filterZone,
+    filterBalance,
+    sortBy,
+    invoices,
+    overduePropertyIds,
+  ]);
+
+  const portfolioKpis = useMemo(() => {
+    const totalSqm = properties.reduce((acc, p) => acc + (p.areaSqm || 0), 0);
+    const totalBaseRevenue = properties.reduce((acc, p) => acc + (p.basePrice || 0), 0);
+    const totalPendingReceivables = invoices
+      .filter((inv) => inv.status === 'Pendiente')
+      .reduce((acc, inv) => acc + inv.amount, 0);
+    const overduePotentialRevenue = overdueAlerts.reduce(
+      (acc, a) => acc + (a.property.basePrice || 0),
+      0
+    );
+    return {
+      totalClients: properties.length,
+      totalSqm,
+      totalBaseRevenue,
+      totalPendingReceivables,
+      overduePotentialRevenue,
+    };
+  }, [properties, invoices, overdueAlerts]);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 surface-card rounded-2xl p-4 sm:p-5">
-        <div>
-          <h2 className="font-display text-base sm:text-lg font-bold text-slate-900">
-            Cartera de Clientes y Propiedades ({filtered.length} de {properties.length})
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Consulta cuánto le cobraste anteriormente a cada cliente, ajusta tarifas por inflación o salda cobros pendientes
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 sm:w-52">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Buscar cliente, calle o zona..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
-            />
-          </div>
-
-          <select
-            aria-label="Filtrar por localidad"
-            value={filterZone}
-            onChange={(e) => setFilterZone(e.target.value)}
-            className="px-2.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-medium"
-          >
-            <option value="Todas">Todas las zonas</option>
-            <option value="Venado Tuerto">Zona Centro / Urbana</option>
-            <option value="Pueblos">Zonas Residenciales / Ruta</option>
-          </select>
-
-          <select
-            aria-label="Filtrar por tipo de propiedad"
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-            className="px-2.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-medium"
-          >
-            <option value="Todos">Todos los lotes</option>
-            <option value="Casa">Casas</option>
-            <option value="Terreno">Terrenos</option>
-            <option value="Quinta">Quintas</option>
-          </select>
-
-          <select
-            aria-label="Filtrar por estado de saldo"
-            value={filterBalance}
-            onChange={(e) => setFilterBalance(e.target.value as 'todos' | 'con_deuda')}
-            className="px-2.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-medium"
-          >
-            <option value="todos">Todos los saldos</option>
-            <option value="con_deuda">Con saldo pendiente</option>
-          </select>
-
-          <select
-            aria-label="Ordenar clientes"
-            value={sortBy}
-            onChange={(e) =>
-              setSortBy(e.target.value as 'nombre' | 'tarifa_mayor' | 'proximo_corte')
-            }
-            className="px-2.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-medium"
-          >
-            <option value="nombre">Orden: A-Z</option>
-            <option value="tarifa_mayor">Mayor tarifa</option>
-            <option value="proximo_corte">Próximo corte</option>
-          </select>
-
-          <button
-            type="button"
-            onClick={onOpenNewClient}
-            className="min-h-[40px] inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors whitespace-nowrap"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Nuevo Cliente</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Opción 3: Actualización de Tarifas por Inflación en 1 Clic + Alias Bancario */}
-      {onBulkUpdatePrices && (
-        <div className="surface-command text-white rounded-2xl p-3.5 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
-              <TrendingUp className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>ACTUALIZAR TARIFAS POR INFLACIÓN (1 CLIC):</span>
+      {/* UNIFIED CLIENT PORTFOLIO SUMMARY & FILTER BAR */}
+      <section
+        aria-label="Resumen de Cartera y Buscador de Clientes"
+        className="bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-2xs overflow-hidden"
+      >
+        {/* Top Row: 3 Clean Portfolio KPIs */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
+          <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-medium text-slate-500">
+                Clientes y Lotes Activos
+              </div>
+              <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums mt-0.5">
+                {portfolioKpis.totalClients}{' '}
+                <span className="text-xs font-sans font-normal text-slate-500">
+                  propiedades
+                </span>
+              </div>
             </div>
-            <label className="inline-flex items-center gap-1.5 text-xs text-emerald-100 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={onlyOutdated}
-                onChange={(e) => setOnlyOutdated(e.target.checked)}
-                className="rounded border-emerald-500 text-emerald-500"
-              />
-              <span>Solo clientes sin actualizar (+20 días)</span>
-            </label>
+            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-mono font-semibold">
+              {portfolioKpis.totalSqm.toLocaleString('es-AR')} m²
+            </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {[10, 15, 20].map((pct) => (
-              <button
-                key={pct}
-                type="button"
-                onClick={() => onBulkUpdatePrices(pct, onlyOutdated)}
-                className="min-h-[34px] px-3 py-1 text-xs font-mono font-bold bg-emerald-500 text-slate-950 rounded-lg hover:bg-emerald-400 transition-colors whitespace-nowrap"
-              >
-                Aplicar +{pct}%
-              </button>
-            ))}
+          <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-medium text-slate-500">
+                Potencial por Ciclo Completo
+              </div>
+              <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums mt-0.5">
+                ${portfolioKpis.totalBaseRevenue.toLocaleString('es-AR')}
+              </div>
+            </div>
+            {onBulkUpdatePrices && (
+              <div className="flex items-center gap-1">
+                {[10, 15].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => onBulkUpdatePrices(pct, false)}
+                    title={`Aumentar tarifas un ${pct}%`}
+                    className="px-2 py-1 text-[11px] font-mono font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg cursor-pointer transition-colors"
+                  >
+                    +{pct}%
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
-            {onOpenAliasModal && (
+          <div
+            data-testid="overdue-cuts-radar"
+            className="px-4 py-3.5 flex items-center justify-between gap-3"
+          >
+            <div>
+              <div className="text-[11px] font-medium text-slate-500">
+                Por Cobrar en Calle
+              </div>
+              <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums mt-0.5">
+                ${portfolioKpis.totalPendingReceivables.toLocaleString('es-AR')}
+              </div>
+            </div>
+            {overdueAlerts.length > 0 && (
               <button
                 type="button"
-                onClick={onOpenAliasModal}
-                className="min-h-[34px] px-3 py-1 text-xs font-mono font-semibold text-emerald-100 bg-emerald-900/90 border border-emerald-700 rounded-lg hover:bg-emerald-800 transition-colors whitespace-nowrap"
+                onClick={() =>
+                  setFilterBalance((prev) =>
+                    prev === 'vencidos' ? 'todos' : 'vencidos'
+                  )
+                }
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  filterBalance === 'vencidos'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                }`}
               >
-                Alias Cobro: {paymentAlias}
+                {overdueAlerts.length} para agendar
               </button>
             )}
           </div>
         </div>
-      )}
+
+        {/* Bottom Row: Streamlined Search + Quick Filter Pills + New Client CTA */}
+        <div className="px-4 py-2.5 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+            <div className="relative flex-1 max-w-xs min-w-[180px]">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Buscar cliente, calle o barrio..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-white text-slate-900 focus:outline-none focus:border-slate-900"
+              />
+            </div>
+
+            <div className="inline-flex items-center p-0.5 bg-white border border-slate-200 rounded-xl">
+              {(
+                [
+                  { id: 'todos', label: `Todos (${properties.length})` },
+                  {
+                    id: 'vencidos',
+                    label: `Por agendar (${overdueAlerts.length})`,
+                  },
+                  { id: 'con_deuda', label: 'Con deuda' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFilterBalance(tab.id)}
+                  className={`min-h-[28px] px-2.5 py-0.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+                    filterBalance === tab.id
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <select
+              aria-label="Filtrar por tipo de propiedad"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-xl bg-white text-slate-700 font-medium"
+            >
+              <option value="Todos">Todos los tipos</option>
+              <option value="Casa">Casas</option>
+              <option value="Terreno">Terrenos</option>
+              <option value="Quinta">Quintas</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenNewClient}
+            className="min-h-[34px] inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl whitespace-nowrap cursor-pointer shadow-2xs"
+          >
+            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Nuevo Cliente</span>
+          </button>
+        </div>
+      </section>
 
       {filtered.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-          <p className="text-sm font-semibold text-slate-800">
-            No se encontraron clientes con ese filtro
+        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center">
+          <p className="text-sm font-semibold text-slate-900">
+            No se encontraron clientes con ese criterio
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Agrega un nuevo cliente en tu cartera con el botón &ldquo;Nuevo Cliente&rdquo;.
+            Limpiá el filtro o registrá un cliente nuevo con el botón «Nuevo Cliente».
           </p>
         </div>
       ) : (
         <>
-          {/* Vista de Tarjetas para Celular */}
-          <div className="grid grid-cols-1 gap-3 md:hidden">
+          {/* Mobile Client Cards */}
+          <div className="grid grid-cols-1 gap-2.5 md:hidden">
             {filtered.map((prop) => {
               const alreadyInToday = todayJobs.some(
                 (j) => j.propertyId === prop.id
@@ -266,43 +362,23 @@ export function ClientsView({
                 prop.clientName,
                 invoices
               );
-              const cutTimeSummary = getClientCutTimeHistory(
-                prop.id,
-                prop.clientName,
-                invoices,
-                todayJobs,
-                prop.estimatedMinutes,
-                prop.areaSqm
-              );
               const cleanPhone = prop.phone.replace(/[^0-9]/g, '');
 
               return (
                 <div
                   key={prop.id}
-                  className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 min-w-0 break-words"
+                  className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2.5 min-w-0 shadow-2xs"
                 >
                   <div className="flex items-start justify-between gap-2 min-w-0">
                     <div className="min-w-0">
-                      <div className="font-bold text-slate-900 text-sm break-words">
+                      <div className="font-bold text-slate-900 text-sm truncate">
                         {prop.clientName}
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5 break-words">
+                      <div className="text-xs text-slate-500 mt-0.5 truncate">
                         {prop.address} · {prop.neighborhood}
                       </div>
-                      <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums flex flex-wrap items-center gap-1.5">
-                        <span>
-                          {prop.propertyType} · {prop.areaSqm} m² ·{' '}
-                          {prop.frequency}
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-semibold">
-                          <Clock className="w-3 h-3 shrink-0" />
-                          <span>
-                            Prom:{' '}
-                            {cutTimeSummary.averageMinutes ??
-                              prop.estimatedMinutes}{' '}
-                            min
-                          </span>
-                        </span>
+                      <div className="text-[11px] text-slate-500 mt-1 font-mono tabular-nums">
+                        {prop.propertyType} · {prop.areaSqm} m² · {prop.frequency}
                       </div>
                     </div>
 
@@ -310,96 +386,44 @@ export function ClientsView({
                       <div className="text-base font-bold font-mono text-slate-900 tabular-nums">
                         ${prop.basePrice.toLocaleString('es-AR')}
                       </div>
-                      <div className="text-[11px] text-slate-500">
-                        Tarifa actual
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Cuánto se le cobró anteriormente */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs min-w-0">
-                    <div className="min-w-0 break-words">
-                      <span className="font-semibold text-slate-700">
-                        Último cobro:
-                      </span>{' '}
-                      {history.lastAmount ? (
-                        <span className="font-mono font-bold text-emerald-800">
-                          ${history.lastAmount.toLocaleString('es-AR')} (
-                          {history.lastDate})
-                        </span>
+                      {history.pendingBalance > 0 ? (
+                        <div className="text-[11px] font-semibold text-amber-700">
+                          Debe ${history.pendingBalance.toLocaleString('es-AR')}
+                        </div>
                       ) : (
-                        <span className="text-slate-500">Sin cortes previos</span>
-                      )}
-                      {cutTimeSummary.lastDurationMinutes && (
-                        <div className="text-[11px] text-teal-800 font-mono mt-0.5">
-                          Último tiempo real: {cutTimeSummary.lastDurationMinutes} min (Est: {prop.estimatedMinutes} min)
-                        </div>
-                      )}
-                      {history.previousAmount && (
-                        <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                          Cobro anterior: $
-                          {history.previousAmount.toLocaleString('es-AR')} (
-                          {history.previousDate})
+                        <div className="text-[11px] text-emerald-600 font-medium">
+                          Al día
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onViewClientHistory(prop)}
-                      className="min-h-[34px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg shrink-0"
-                    >
-                      <History className="w-3.5 h-3.5 shrink-0" />
-                      <span>Historial ({history.totalCutsCount})</span>
-                    </button>
                   </div>
 
-                  {history.pendingBalance > 0 && (
-                    <div className="flex items-center justify-between gap-2 text-xs font-medium text-amber-900 bg-amber-50/70 border border-amber-200/80 rounded-lg px-2.5 py-1.5 font-mono tabular-nums">
-                      <span>
-                        Saldo pendiente: $
-                        {history.pendingBalance.toLocaleString('es-AR')}
-                      </span>
-                      {onSettleClientPendingInvoices && (
-                        <button
-                          type="button"
-                          onClick={() => onSettleClientPendingInvoices(prop.id)}
-                          className="font-sans font-semibold text-[11px] px-2 py-0.5 bg-emerald-700 text-white rounded-md hover:bg-emerald-800"
-                        >
-                          Saldar deuda
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onViewClientHistory(prop)}
+                        className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg"
+                      >
+                        <History className="w-3.5 h-3.5" />
+                        <span>Ficha</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => onEditClient(prop)}
-                        className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg"
+                        className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                         <span>Editar</span>
                       </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onRequestDeleteClient(prop)}
-                        aria-label={`Eliminar cliente ${prop.clientName}`}
-                        className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-700 bg-red-50 rounded-lg"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Eliminar</span>
-                      </button>
-
                       <a
                         href={`https://wa.me/${cleanPhone}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 rounded-lg"
+                        className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>WA</span>
                       </a>
                     </div>
 
@@ -407,24 +431,24 @@ export function ClientsView({
                       <button
                         type="button"
                         onClick={() => onScheduleClient(prop)}
-                        className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg"
+                        className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg"
                       >
-                        <Calendar className="w-3.5 h-3.5" />
+                        <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Agendar</span>
                       </button>
 
                       {alreadyInToday ? (
-                        <span className="text-xs font-semibold text-emerald-700 px-2 py-1">
+                        <span className="text-xs font-semibold text-emerald-600 px-2 py-1">
                           ✓ En Ruta
                         </span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => onAddPropertyToToday(prop)}
-                          className="min-h-[38px] inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg"
+                          className="min-h-[32px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-slate-900 rounded-lg"
                         >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Sumar Hoy</span>
+                          <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>+ Hoy</span>
                         </button>
                       )}
                     </div>
@@ -434,21 +458,20 @@ export function ClientsView({
             })}
           </div>
 
-          {/* Vista de Tabla para Escritorio */}
-          <div className="hidden md:block bg-white border border-slate-200 rounded-xl overflow-hidden">
+          {/* Desktop Clean Client Table */}
+          <div className="hidden md:block bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    <th className="py-3 px-4">Cliente y Contacto</th>
-                    <th className="py-3 px-4">Dirección · Barrio / Pueblo</th>
-                    <th className="py-3 px-4">Lote y Frecuencia</th>
-                    <th className="py-3 px-4">Cobros Anteriores al Cliente</th>
-                    <th className="py-3 px-4 text-right">Tarifa Actual y Saldo</th>
+                  <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-mono font-semibold uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">Cliente</th>
+                    <th className="py-3 px-4">Dirección y Superficie</th>
+                    <th className="py-3 px-4">Frecuencia y Último Cobro</th>
+                    <th className="py-3 px-4 text-right">Tarifa Vigente</th>
                     <th className="py-3 px-4 text-right">Acciones</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 text-sm">
+                <tbody className="divide-y divide-slate-200/80 text-sm">
                   {filtered.map((prop) => {
                     const alreadyInToday = todayJobs.some(
                       (j) => j.propertyId === prop.id
@@ -458,150 +481,97 @@ export function ClientsView({
                       prop.clientName,
                       invoices
                     );
-                    const cutTimeSummary = getClientCutTimeHistory(
-                      prop.id,
-                      prop.clientName,
-                      invoices,
-                      todayJobs,
-                      prop.estimatedMinutes,
-                      prop.areaSqm
-                    );
                     const cleanPhone = prop.phone.replace(/[^0-9]/g, '');
 
                     return (
                       <tr
                         key={prop.id}
-                        className="hover:bg-slate-50/80 transition-colors"
+                        className="hover:bg-slate-50/70 transition-colors"
                       >
-                        <td className="py-3.5 px-4 align-top break-words">
-                          <div className="font-semibold text-slate-900">
+                        <td className="py-3 px-4 align-middle">
+                          <div className="font-bold text-slate-900">
                             {prop.clientName}
                           </div>
-                          <div className="text-xs text-slate-500 font-mono mt-0.5 flex flex-wrap items-center gap-2">
+                          <div className="text-xs text-slate-500 font-mono mt-0.5 flex items-center gap-2">
                             <span>{prop.phone}</span>
                             <a
                               href={`https://wa.me/${cleanPhone}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-emerald-700 hover:underline font-sans font-medium"
+                              className="text-emerald-600 hover:underline font-sans font-medium"
                             >
                               WhatsApp
                             </a>
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 align-top break-words">
-                          <div className="text-slate-800 font-medium">
+                        <td className="py-3 px-4 align-middle">
+                          <div className="text-slate-900 font-medium">
                             {prop.address}
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5">
-                            {prop.neighborhood}
+                            {prop.neighborhood} · {prop.propertyType} ({prop.areaSqm} m²)
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 align-top">
-                          <div className="text-slate-800 font-medium">
-                            {prop.propertyType} ·{' '}
-                            <span className="font-mono tabular-nums">
-                              {prop.areaSqm} m²
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
+                        <td className="py-3 px-4 align-middle">
+                          <div className="text-xs font-semibold text-slate-800">
                             {prop.frequency} · Próx: {prop.nextCutDate}
                           </div>
-                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-mono font-semibold">
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span>
-                              Prom:{' '}
-                              {cutTimeSummary.averageMinutes ??
-                                prop.estimatedMinutes}{' '}
-                              min
-                            </span>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            {history.lastAmount ? (
+                              <span>
+                                Último: ${history.lastAmount.toLocaleString('es-AR')} ({history.lastDate})
+                              </span>
+                            ) : (
+                              <span>Sin cobros registrados</span>
+                            )}
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 align-top">
-                          {history.lastAmount ? (
-                            <div className="space-y-0.5">
-                              <div className="text-xs font-mono text-slate-900">
-                                <span className="text-slate-500 font-sans">
-                                  Último ({history.lastDate}):
-                                </span>{' '}
-                                <span className="font-bold text-emerald-800">
-                                  ${history.lastAmount.toLocaleString('es-AR')}
-                                </span>
-                              </div>
-                              {history.previousAmount && (
-                                <div className="text-[11px] font-mono text-slate-500">
-                                  Anterior ({history.previousDate}): $
-                                  {history.previousAmount.toLocaleString('es-AR')}
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => onViewClientHistory(prop)}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:underline mt-0.5"
-                              >
-                                <History className="w-3 h-3" />
-                                <span>
-                                  Ver los {history.totalCutsCount} cobros (Total: $
-                                  {history.totalBilled.toLocaleString('es-AR')})
-                                </span>
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">
-                              Sin cobros registrados aún
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 align-top text-right font-mono tabular-nums">
+                        <td className="py-3 px-4 align-middle text-right font-mono tabular-nums">
                           <div className="font-bold text-slate-900">
                             ${prop.basePrice.toLocaleString('es-AR')}
                           </div>
                           {history.pendingBalance > 0 ? (
-                            <div className="mt-0.5 space-y-1">
-                              <div className="text-xs font-semibold text-amber-700">
-                                Debe: $
-                                {history.pendingBalance.toLocaleString('es-AR')}
-                              </div>
+                            <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                              <span className="text-xs font-semibold text-amber-700">
+                                Debe ${history.pendingBalance.toLocaleString('es-AR')}
+                              </span>
                               {onSettleClientPendingInvoices && (
                                 <button
                                   type="button"
                                   onClick={() =>
                                     onSettleClientPendingInvoices(prop.id)
                                   }
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-sans font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100"
+                                  className="px-2 py-0.5 text-[10px] font-sans font-semibold text-white bg-slate-900 rounded hover:bg-slate-800 cursor-pointer"
                                 >
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>Saldar</span>
+                                  Saldar
                                 </button>
                               )}
                             </div>
                           ) : (
-                            <div className="text-[11px] text-slate-400 mt-0.5">
+                            <div className="text-[11px] text-emerald-600 font-sans font-medium">
                               Al día
                             </div>
                           )}
                         </td>
-                        <td className="py-3.5 px-4 align-top text-right">
+                        <td className="py-3 px-4 align-middle text-right">
                           <div className="inline-flex items-center justify-end gap-1.5">
                             <button
                               type="button"
                               onClick={() => onScheduleClient(prop)}
-                              title="Programar corte con fecha y horario en el calendario"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg transition-colors whitespace-nowrap"
+                              className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
                             >
-                              <Calendar className="w-3.5 h-3.5" />
-                              <span>Programar</span>
+                              Agendar
                             </button>
 
                             {alreadyInToday ? (
-                              <span className="text-xs font-medium text-emerald-700 px-2 py-1 whitespace-nowrap">
-                                En Ruta
+                              <span className="text-xs font-semibold text-emerald-600 px-2 py-1 whitespace-nowrap">
+                                ✓ En Ruta
                               </span>
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => onAddPropertyToToday(prop)}
-                                className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
+                                className="px-2.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
                               >
                                 + Hoy
                               </button>
@@ -610,8 +580,8 @@ export function ClientsView({
                             <button
                               type="button"
                               onClick={() => onViewClientHistory(prop)}
-                              title="Ver historial de cobros a este cliente"
-                              className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                              title="Ver ficha e historial"
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                             >
                               <History className="w-4 h-4" />
                             </button>
@@ -620,7 +590,7 @@ export function ClientsView({
                               type="button"
                               onClick={() => onEditClient(prop)}
                               title="Editar cliente"
-                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
@@ -630,7 +600,7 @@ export function ClientsView({
                               onClick={() => onRequestDeleteClient(prop)}
                               title="Eliminar cliente"
                               aria-label={`Eliminar ${prop.clientName}`}
-                              className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -681,6 +651,10 @@ export function QuoteCalculatorView({
   const [prospectPhone, setProspectPhone] = useState('');
   const [prospectAddress, setProspectAddress] = useState('');
 
+  const [quoteProposalMode, setQuoteProposalMode] = useState<'doble' | 'simple'>(
+    'doble'
+  );
+
   const computedSqm =
     inputMode === 'dimensions'
       ? Math.max(
@@ -708,6 +682,29 @@ export function QuoteCalculatorView({
   const totalSuggestedPrice = baseQuote.suggestedPrice + parsedTravelFee;
   const pricePerSqm = Math.round(totalSuggestedPrice / computedSqm);
 
+  const dualTierQuote = useMemo(
+    () =>
+      calculateDualTierQuote({
+        areaSqm: computedSqm,
+        propertyType,
+        grassCondition,
+        includesBagging,
+        extraTasksCount,
+        travelFee: parsedTravelFee,
+        baseRatePerSqm: businessProfile?.baseRatePerSqm,
+        minServicePrice: businessProfile?.minServicePrice,
+      }),
+    [
+      computedSqm,
+      propertyType,
+      grassCondition,
+      includesBagging,
+      extraTasksCount,
+      parsedTravelFee,
+      businessProfile,
+    ]
+  );
+
   const handleTownChange = (zone: string) => {
     setSelectedTown(zone);
     if (zone.startsWith('Venado Tuerto')) {
@@ -725,20 +722,36 @@ export function QuoteCalculatorView({
   };
 
   const brandSignature = businessProfile?.appName || 'PastoPro';
-  const whatsappQuoteMessage = `Hola${
-    prospectName ? ` ${prospectName}` : ''
-  }! Te paso el presupuesto de ${brandSignature} para corte de pasto y mantenimiento en ${selectedTown}${
-    prospectAddress ? ` (${prospectAddress})` : ''
-  }:
+  const whatsappQuoteMessage =
+    quoteProposalMode === 'doble'
+      ? `Hola${
+          prospectName ? ` ${prospectName}` : ''
+        }! Te paso el presupuesto de ${brandSignature} para corte y mantenimiento en ${selectedTown}${
+          prospectAddress ? ` (${prospectAddress})` : ''
+        } (${computedSqm} m² · ${propertyType}):
+
+✅ OPCIÓN 1 — Corte Único / Limpieza Inicial: $${dualTierQuote.singleCutPrice.toLocaleString('es-AR')}
+✅ OPCIÓN 2 — Abono Mantenimiento Quincenal: $${dualTierQuote.biweeklyCutPrice.toLocaleString('es-AR')} por visita (Ahorrás $${dualTierQuote.savingsPerCutForClient.toLocaleString('es-AR')} en cada corte y el lote se mantiene siempre prolijo).
+
+• Incluye: Corte completo, bordeado perimetral${
+          includesBagging ? ' y embolsado final' : ' y soplado de vereda'
+        }.
+• Tiempo estimado de trabajo: ~${baseQuote.estimatedMinutes} min.
+Avisame cuál opción te queda mejor y coordinamos día y horario!`
+      : `Hola${
+          prospectName ? ` ${prospectName}` : ''
+        }! Te paso el presupuesto de ${brandSignature} para corte de pasto y mantenimiento en ${selectedTown}${
+          prospectAddress ? ` (${prospectAddress})` : ''
+        }:
 • Superficie: ${computedSqm} m² (${propertyType})
 • Estado del pasto: ${grassCondition}
 • Incluye: Corte completo, bordeado perimetral${
-    includesBagging ? ' y embolsado final' : ' y soplado de vereda'
-  }${
-    parsedTravelFee > 0
-      ? `\n• Traslado de equipos a localidad: $${parsedTravelFee.toLocaleString('es-AR')}`
-      : ''
-  }
+          includesBagging ? ' y embolsado final' : ' y soplado de vereda'
+        }${
+          parsedTravelFee > 0
+            ? `\n• Traslado de equipos a localidad: $${parsedTravelFee.toLocaleString('es-AR')}`
+            : ''
+        }
 • Frecuencia: ${frequency}
 • Valor total del servicio: $${totalSuggestedPrice.toLocaleString('es-AR')}
 • Tiempo estimado: ~${baseQuote.estimatedMinutes} min.
@@ -752,18 +765,15 @@ Avisame si te queda bien y coordinamos día y horario!`;
     : `https://wa.me/?text=${encodeURIComponent(whatsappQuoteMessage)}`;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-5">
-        <div className="border-b border-slate-200 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-2xs">
+        <div className="pb-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-emerald-700" />
-              <h2 className="text-base font-bold text-slate-900">
-                Cotizador Rápido · {brandSignature}
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Base configurada: ${businessProfile?.baseRatePerSqm || 65}/m² · Mínimo: $
+            <h2 className="font-display text-base font-bold text-slate-900 tracking-tight">
+              Cotizador de Servicios · {brandSignature}
+            </h2>
+            <p className="text-xs text-slate-500 font-mono mt-0.5">
+              Tarifa base: ${businessProfile?.baseRatePerSqm || 65}/m² · Mínimo: $
               {(businessProfile?.minServicePrice || 18000).toLocaleString('es-AR')}
             </p>
           </div>
@@ -771,10 +781,10 @@ Avisame si te queda bien y coordinamos día y horario!`;
             <button
               type="button"
               onClick={onOpenBusinessProfile}
-              className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 whitespace-nowrap shrink-0"
+              className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors"
             >
               <Pencil className="w-3.5 h-3.5" />
-              <span>Editar mi tarifa $/m²</span>
+              <span>Ajustar tarifa $/m²</span>
             </button>
           )}
         </div>
@@ -786,13 +796,13 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 htmlFor="quote-town-select"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Localidad / Barrio del Trabajo
+                Zona / Barrio
               </label>
               <select
                 id="quote-town-select"
                 value={selectedTown}
                 onChange={(e) => handleTownChange(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
               >
                 {Object.keys(NEIGHBORHOOD_COORDINATES).map((z) => (
                   <option key={z} value={z}>
@@ -807,7 +817,7 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 htmlFor="quote-travel-fee"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Adicional Traslado / Ruta ($)
+                Adicional Traslado ($)
               </label>
               <input
                 id="quote-travel-fee"
@@ -816,97 +826,99 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 step={500}
                 value={travelFee}
                 onChange={(e) => setTravelFee(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono tabular-nums"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono tabular-nums bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
               />
             </div>
           </div>
 
           <div>
-            <span className="block text-xs font-semibold text-slate-700 mb-1.5">
-              ¿Cómo te pasó las medidas el cliente?
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setInputMode('dimensions')}
-                className={`min-h-[40px] px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                  inputMode === 'dimensions'
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                Por Frente × Fondo (Ej. 12m × 35m)
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputMode('sqm')}
-                className={`min-h-[40px] px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                  inputMode === 'sqm'
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                Metros Cuadrados Directos (m²)
-              </button>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-slate-700">
+                Superficie del lote
+              </span>
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setInputMode('dimensions')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                    inputMode === 'dimensions'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Frente × Fondo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode('sqm')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                    inputMode === 'sqm'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Metros m²
+                </button>
+              </div>
             </div>
-          </div>
 
-          {inputMode === 'dimensions' ? (
-            <div className="grid grid-cols-2 gap-3">
+            {inputMode === 'dimensions' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="quote-width"
+                    className="block text-[11px] text-slate-500 mb-1"
+                  >
+                    Frente (m)
+                  </label>
+                  <input
+                    id="quote-width"
+                    type="number"
+                    min={2}
+                    max={500}
+                    value={widthMeters}
+                    onChange={(e) => setWidthMeters(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="quote-length"
+                    className="block text-[11px] text-slate-500 mb-1"
+                  >
+                    Fondo (m)
+                  </label>
+                  <input
+                    id="quote-length"
+                    type="number"
+                    min={2}
+                    max={500}
+                    value={lengthMeters}
+                    onChange={(e) => setLengthMeters(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono tabular-nums"
+                  />
+                </div>
+              </div>
+            ) : (
               <div>
                 <label
-                  htmlFor="quote-width"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  htmlFor="quote-sqm"
+                  className="block text-[11px] text-slate-500 mb-1"
                 >
-                  Ancho / Frente (metros)
+                  Superficie Total (m²)
                 </label>
                 <input
-                  id="quote-width"
+                  id="quote-sqm"
                   type="number"
-                  min={2}
-                  max={500}
-                  value={widthMeters}
-                  onChange={(e) => setWidthMeters(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono tabular-nums"
+                  min={20}
+                  max={20000}
+                  value={directSqm}
+                  onChange={(e) => setDirectSqm(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono tabular-nums"
                 />
               </div>
-              <div>
-                <label
-                  htmlFor="quote-length"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Largo / Fondo (metros)
-                </label>
-                <input
-                  id="quote-length"
-                  type="number"
-                  min={2}
-                  max={500}
-                  value={lengthMeters}
-                  onChange={(e) => setLengthMeters(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono tabular-nums"
-                />
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label
-                htmlFor="quote-sqm"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Superficie Total (m²)
-              </label>
-              <input
-                id="quote-sqm"
-                type="number"
-                min={20}
-                max={20000}
-                value={directSqm}
-                onChange={(e) => setDirectSqm(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono tabular-nums"
-              />
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
@@ -914,7 +926,7 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 htmlFor="quote-prop-type"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Tipo de Propiedad
+                Propiedad
               </label>
               <select
                 id="quote-prop-type"
@@ -922,11 +934,11 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 onChange={(e) =>
                   setPropertyType(e.target.value as PropertyType)
                 }
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/60"
               >
                 <option value="Casa">Casa con jardín</option>
-                <option value="Terreno">Terreno baldío / Lote</option>
-                <option value="Quinta">Quinta / Parque grande</option>
+                <option value="Terreno">Terreno / Lote</option>
+                <option value="Quinta">Quinta / Parque</option>
               </select>
             </div>
 
@@ -935,7 +947,7 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 htmlFor="quote-grass-cond"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Altura / Estado del Pasto
+                Estado del Pasto
               </label>
               <select
                 id="quote-grass-cond"
@@ -943,13 +955,11 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 onChange={(e) =>
                   setGrassCondition(e.target.value as GrassCondition)
                 }
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/60"
               >
                 <option value="Regular">Mantenido (&lt;12 cm)</option>
-                <option value="Alto">Pasto Alto (15-25 cm · +30%)</option>
-                <option value="Maleza Pesada">
-                  Maleza Pesada / Cardos (+65%)
-                </option>
+                <option value="Alto">Pasto Alto (+30%)</option>
+                <option value="Maleza Pesada">Maleza Pesada (+65%)</option>
               </select>
             </div>
 
@@ -958,69 +968,69 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 htmlFor="quote-freq"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Frecuencia de Corte
+                Frecuencia
               </label>
               <select
                 id="quote-freq"
                 value={frequency}
                 onChange={(e) => setFrequency(e.target.value as CutFrequency)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/60"
               >
-                <option value="Semanal">Semanal (-10% abono)</option>
-                <option value="Quincenal">Quincenal (Tarifa base)</option>
+                <option value="Semanal">Semanal (-10%)</option>
+                <option value="Quincenal">Quincenal (Base)</option>
                 <option value="Mensual">Mensual (+25%)</option>
-                <option value="Única vez">Limpieza única vez (+35%)</option>
+                <option value="Única vez">Única vez (+35%)</option>
               </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer p-2.5 border border-slate-200 rounded-lg bg-slate-50">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer p-2.5 border border-slate-200 rounded-lg bg-slate-50/60">
               <input
                 type="checkbox"
                 checked={includesBagging}
                 onChange={(e) => setIncludesBagging(e.target.checked)}
-                className="rounded border-slate-300 text-emerald-700"
+                className="rounded border-slate-300 text-slate-900"
               />
-              <span>Incluir embolsado y retiro de pasto</span>
+              <span>Incluir embolsado de pasto</span>
             </label>
 
-            <div className="flex items-center justify-between p-2.5 border border-slate-200 rounded-lg bg-slate-50">
-              <span className="text-xs font-medium text-slate-800">
-                Tareas extra (cerco, canteros):
+            <div className="flex items-center justify-between p-2.5 border border-slate-200 rounded-lg bg-slate-50/60">
+              <span className="text-xs font-medium text-slate-700">
+                Tareas extra:
               </span>
               <select
                 aria-label="Cantidad de tareas extra"
                 value={extraTasksCount}
                 onChange={(e) => setExtraTasksCount(Number(e.target.value))}
-                className="px-2 py-1 text-xs border border-slate-300 rounded bg-white font-mono"
+                className="px-2 py-1 text-xs border border-slate-200 rounded bg-white font-mono"
               >
-                <option value={0}>0 extras</option>
-                <option value={1}>+1 tarea ($4.500)</option>
-                <option value={2}>+2 tareas ($9.000)</option>
-                <option value={3}>+3 tareas ($13.500)</option>
+                <option value={0}>Sin extras</option>
+                <option value={1}>+1 ($4.500)</option>
+                <option value={2}>+2 ($9.000)</option>
+                <option value={3}>+3 ($13.500)</option>
               </select>
             </div>
           </div>
 
-          <div className="border-t border-slate-200 pt-4">
-            <div className="text-xs font-semibold text-slate-700 mb-2">
-              Datos del cliente para enviar por WhatsApp o agendarlo (con autocompletado de calles):
+          <div className="border-t border-slate-100 pt-3.5 space-y-2.5">
+            <div className="text-xs font-semibold text-slate-700">
+              Datos del cliente (opcional para enviar o agendar)
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <input
                 type="text"
-                placeholder="Nombre (Ej. Carlos)"
+                placeholder="Nombre del cliente"
                 value={prospectName}
                 onChange={(e) => setProspectName(e.target.value)}
-                className="px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                className="px-3 py-2 text-xs border border-slate-200 rounded-lg"
               />
               <input
                 type="text"
                 placeholder="WhatsApp (Ej. 3462554433)"
                 value={prospectPhone}
                 onChange={(e) => setProspectPhone(e.target.value)}
-                className="px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                className="px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono"
               />
             </div>
             <StreetAddressAutocomplete
@@ -1039,76 +1049,115 @@ Avisame si te queda bien y coordinamos día y horario!`;
               activeNeighborhood={selectedTown}
               activeCity={activeCity}
               existingProperties={existingProperties}
-              placeholder="Empieza a escribir la calle (Ej. Av. Casey 650, Mitre 1100...)"
+              placeholder="Dirección (Ej. Av. Casey 650, Mitre 1100...)"
             />
           </div>
         </div>
       </div>
 
       {/* Resultado del Presupuesto */}
-      <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between space-y-5">
+      <div
+        data-testid="dual-tier-quote-panel"
+        className="lg:col-span-5 bg-white text-slate-900 border border-slate-200 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-2xs"
+      >
         <div className="space-y-4">
-          <div className="border-b border-slate-200 pb-3">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-800">
-              Presupuesto Calculado ({selectedTown})
+          <div className="border-b border-slate-100 pb-3.5 flex items-start justify-between gap-2">
+            <div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Valor Sugerido ({selectedTown})
+              </span>
+              <div className="font-display text-3xl font-extrabold font-mono text-slate-900 tabular-nums mt-0.5 tracking-tight">
+                ${totalSuggestedPrice.toLocaleString('es-AR')}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
+                {computedSqm} m² · ~${pricePerSqm}/m² · ~{baseQuote.estimatedMinutes} min
+              </div>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-mono font-bold shrink-0">
+              ${dualTierQuote.netHourlyProfitSingle.toLocaleString('es-AR')}/h
             </span>
-            <div className="text-3xl font-bold font-mono text-slate-900 tabular-nums mt-1">
-              ${totalSuggestedPrice.toLocaleString('es-AR')}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-slate-700">
+                Formato de propuesta:
+              </span>
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setQuoteProposalMode('doble')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold whitespace-nowrap cursor-pointer ${
+                    quoteProposalMode === 'doble'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Doble Opción
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuoteProposalMode('simple')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold whitespace-nowrap cursor-pointer ${
+                    quoteProposalMode === 'simple'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Simple
+                </button>
+              </div>
             </div>
-            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
-              Superficie: {computedSqm} m² · ~${pricePerSqm}/m²
-              {parsedTravelFee > 0
-                ? ` (Incluye $${parsedTravelFee.toLocaleString('es-AR')} de viaje)`
-                : ''}
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  1. Corte Inicial
+                </div>
+                <div className="font-display text-lg font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+                  ${dualTierQuote.singleCutPrice.toLocaleString('es-AR')}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Pasto {grassCondition.toLowerCase()}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-200">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                  2. Abono Quincenal
+                </div>
+                <div className="font-display text-lg font-bold font-mono text-emerald-700 tabular-nums mt-0.5">
+                  ${dualTierQuote.biweeklyCutPrice.toLocaleString('es-AR')}
+                  <span className="text-[10px] font-sans font-normal text-slate-500">
+                    /corte
+                  </span>
+                </div>
+                <div className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                  Mensual: ${dualTierQuote.monthlyAbonoTotal.toLocaleString('es-AR')}
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-              <div className="text-[11px] text-slate-500 uppercase font-semibold">
-                Tiempo Operativo
-              </div>
-              <div className="text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5">
-                ~{baseQuote.estimatedMinutes} min
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                Corte + bordeado {includesBagging ? '+ embolsado' : ''}
-              </div>
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+              Vista previa WhatsApp
             </div>
-
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-              <div className="text-[11px] text-slate-500 uppercase font-semibold flex items-center gap-1">
-                <Fuel className="w-3.5 h-3.5 text-amber-600" />
-                <span>Nafta / Mezcla Est.</span>
-              </div>
-              <div className="text-base font-bold font-mono text-slate-900 tabular-nums mt-0.5">
-                ~{baseQuote.estimatedFuelLiters} Litros
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                Desgaste de máquina incluido
-              </div>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
-            <div className="text-xs font-semibold text-slate-700 mb-1">
-              Mensaje listo para enviar por WhatsApp:
-            </div>
-            <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed font-mono">
+            <p className="text-xs text-slate-700 whitespace-pre-line leading-relaxed font-mono max-h-40 overflow-y-auto">
               {whatsappQuoteMessage}
             </p>
           </div>
         </div>
 
-        <div className="space-y-2.5 pt-2 border-t border-slate-200">
+        <div className="space-y-2 pt-3 border-t border-slate-100">
           <a
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="min-h-[44px] w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 transition-colors"
+            className="min-h-[40px] w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-2xs"
           >
-            <MessageCircle className="w-4 h-4" />
-            <span>Enviar Presupuesto por WhatsApp</span>
+            <MessageCircle className="w-4 h-4 text-emerald-400" />
+            <span>Enviar Propuesta por WhatsApp</span>
           </a>
 
           <button
@@ -1127,10 +1176,10 @@ Avisame si te queda bien y coordinamos día y horario!`;
                 basePrice: totalSuggestedPrice,
               })
             }
-            className="min-h-[44px] w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            className="min-h-[40px] w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
-            <span>Guardar como Nuevo Cliente en Cartera</span>
+            <span>Convertir en Cliente Activo</span>
           </button>
         </div>
       </div>
@@ -1140,6 +1189,7 @@ Avisame si te queda bien y coordinamos día y horario!`;
 
 interface BillingViewProps {
   activeDate?: string;
+  isEasyAccessMode?: boolean;
   properties: ClientProperty[];
   invoices: InvoiceRecord[];
   expenses: OperationalExpense[];
@@ -1155,6 +1205,7 @@ interface BillingViewProps {
 
 export function BillingView({
   activeDate = getTodayIsoLocal(),
+  isEasyAccessMode = false,
   properties,
   invoices,
   expenses,
@@ -1171,12 +1222,16 @@ export function BillingView({
   const [customFrom, setCustomFrom] = useState('2026-08-01');
   const [customTo, setCustomTo] = useState(activeDate);
   const [billingSection, setBillingSection] = useState<
-    'recibos' | 'gastos' | 'estadisticas'
+    'recibos' | 'gastos' | 'estadisticas' | 'galeria'
   >('recibos');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<
     'todos' | 'Pagado' | 'Pendiente'
   >('todos');
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
+  const [galleryStageFilter, setGalleryStageFilter] =
+    useState<BillingGalleryStageFilter>('todos');
+  const [gallerySearchQuery, setGallerySearchQuery] = useState('');
+  const [lightboxPhoto, setLightboxPhoto] = useState<JobPhotoItem | null>(null);
 
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [category, setCategory] = useState<OperationalExpense['category']>(
@@ -1217,6 +1272,17 @@ export function BillingView({
   const detailedAnalytics = useMemo(
     () => computeDetailedAnalytics(invoices, expenses, properties),
     [invoices, expenses, properties]
+  );
+
+  const billingGallery = useMemo(
+    () =>
+      collectBillingBeforeAfterGallery(
+        invoices,
+        properties,
+        galleryStageFilter,
+        gallerySearchQuery
+      ),
+    [invoices, properties, galleryStageFilter, gallerySearchQuery]
   );
 
   const handleStartEditExpense = (exp: OperationalExpense) => {
@@ -1265,23 +1331,20 @@ export function BillingView({
 
   return (
     <div className="space-y-4">
-      {/* Cabecera de Período + 4 KPIs Principales */}
-      <div className="surface-card rounded-2xl p-4 sm:p-5 space-y-4">
+      {/* Cabecera Unificada de Finanzas: Período + 4 KPIs Limpios + Sub-pestañas */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
-          <div className="flex items-center gap-2.5">
-            <BarChart3 className="w-5 h-5 text-emerald-700 shrink-0" />
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Caja, Recibos y Rendimiento por Período
-              </h2>
-              <p className="text-xs text-slate-500">
-                Período activo:{' '}
-                <span className="font-semibold text-slate-800">
-                  {periodLabel}
-                </span>{' '}
-                · {filteredInvoices.length} cortes ({summary.totalSqmCut.toLocaleString('es-AR')} m²)
-              </p>
-            </div>
+          <div>
+            <h2 className="font-display text-base font-bold text-slate-900 tracking-tight">
+              Finanzas y Flujo de Caja
+            </h2>
+            <p className="text-xs text-slate-500">
+              Período:{' '}
+              <span className="font-semibold text-slate-800">
+                {periodLabel}
+              </span>{' '}
+              · {filteredInvoices.length} comprobantes
+            </p>
           </div>
 
           <div
@@ -1293,9 +1356,8 @@ export function BillingView({
               [
                 { id: 'hoy', label: 'Hoy' },
                 { id: 'semana', label: '7 Días' },
-                { id: 'mes_actual', label: 'Últimos 30 Días' },
-                { id: 'mes_anterior', label: 'Mes Anterior' },
-                { id: 'trimestre', label: 'Trimestre' },
+                { id: 'mes_actual', label: '30 Días' },
+                { id: 'mes_anterior', label: 'Mes Ant.' },
                 { id: 'anio', label: 'Año' },
                 { id: 'personalizado', label: 'Fechas' },
               ] as { id: PeriodFilter; label: string }[]
@@ -1304,10 +1366,10 @@ export function BillingView({
                 key={item.id}
                 type="button"
                 onClick={() => setPeriod(item.id)}
-                className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
+                className={`min-h-[30px] px-2.5 py-1 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                   period === item.id
-                    ? 'bg-[#0B2219] text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
                 }`}
               >
                 {item.label}
@@ -1317,7 +1379,7 @@ export function BillingView({
         </div>
 
         {period === 'personalizado' && (
-          <div className="flex flex-wrap items-center gap-3 pb-2 text-xs">
+          <div className="flex flex-wrap items-center gap-3 pb-1 text-xs">
             <div className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-slate-400" />
               <span className="font-semibold text-slate-700">Desde:</span>
@@ -1325,7 +1387,7 @@ export function BillingView({
                 type="date"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
-                className="px-2.5 py-1 border border-slate-300 rounded-lg font-mono"
+                className="px-2.5 py-1 border border-slate-200 rounded-lg font-mono"
               />
             </div>
             <div className="flex items-center gap-1.5">
@@ -1334,84 +1396,119 @@ export function BillingView({
                 type="date"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
-                className="px-2.5 py-1 border border-slate-300 rounded-lg font-mono"
+                className="px-2.5 py-1 border border-slate-200 rounded-lg font-mono"
               />
             </div>
           </div>
         )}
 
-        {/* 4 KPI Cards (Máximo 4 por fila siguiendo estándares de legibilidad) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
-            <div className="text-xs font-medium text-slate-500">
-              Cobrado en Mano / Banco
+        {/* 4 KPIs Limpios en Grilla Horizontal */}
+        <div
+          data-testid="finance-treasury-architecture"
+          className="grid grid-cols-2 lg:grid-cols-4 gap-3"
+        >
+          <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 flex flex-col justify-between">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-800">
+                Ganancia Neta Libre
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-mono font-bold">
+                {summary.margenPorcentaje}%
+              </span>
             </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-700 tabular-nums mt-0.5">
-              ${summary.totalCobrado.toLocaleString('es-AR')}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
-              Total facturado: ${summary.totalFacturado.toLocaleString('es-AR')}
-            </div>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
-            <div className="text-xs font-medium text-slate-500">
-              Ganancia Limpia de Bolsillo
-            </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+            <div
+              data-testid="net-profit-hero-value"
+              className="font-display text-2xl font-bold font-mono tabular-nums text-slate-900 mt-1"
+            >
               ${summary.gananciaNeta.toLocaleString('es-AR')}
             </div>
-            <div className="text-xs text-emerald-700 font-semibold mt-0.5">
-              Margen libre: {summary.margenPorcentaje}% · Prom: $
-              {summary.averageTicket.toLocaleString('es-AR')}
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              Descontando gastos operativos
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
-            <div className="text-xs font-medium text-slate-500">
-              Gastos (Nafta, Tanza, Insumos)
+          <div
+            data-testid="finance-stacked-ledger-rows"
+            className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between"
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              + Ingresos Cobrados
             </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
-              ${summary.totalGastos.toLocaleString('es-AR')}
+            <div className="font-display text-2xl font-bold font-mono tabular-nums text-emerald-700 mt-1">
+              +${summary.totalCobrado.toLocaleString('es-AR')}
             </div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              {filteredExpenses.length} gastos registrados
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              Facturado total: ${summary.totalFacturado.toLocaleString('es-AR')}
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80">
-            <div className="text-xs font-medium text-slate-500">
-              Por Cobrar (Cuenta Corriente)
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              - Gastos e Insumos
             </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono text-amber-700 tabular-nums mt-0.5">
+            <div className="font-display text-2xl font-bold font-mono tabular-nums text-slate-900 mt-1">
+              -${summary.totalGastos.toLocaleString('es-AR')}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {filteredExpenses.length} egresos registrados
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">
+              Por Cobrar en Calle
+            </div>
+            <div className="font-display text-2xl font-bold font-mono tabular-nums text-amber-700 mt-1">
               ${summary.porCobrar.toLocaleString('es-AR')}
             </div>
-            <div className="text-xs text-slate-500 mt-0.5">
+            <div className="text-[11px] text-slate-500 mt-0.5">
               {filteredInvoices.filter((i) => i.status === 'Pendiente').length}{' '}
               recibos pendientes
             </div>
           </div>
         </div>
 
-        {/* Selector de Vista Interna (Progressive Disclosure: Recibos vs Gastos vs Estadísticas) */}
+        {isEasyAccessMode && (
+          <button
+            type="button"
+            data-testid="speak-finance-summary-btn"
+            onClick={() =>
+              speakTextAloud(
+                buildSpokenFinanceSummary({
+                  periodLabel,
+                  totalCobrado: summary.totalCobrado,
+                  totalGastos: summary.totalGastos,
+                  gananciaNeta: summary.gananciaNeta,
+                  porCobrar: summary.porCobrar,
+                })
+              )
+            }
+            className="min-h-[38px] w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition-all cursor-pointer"
+          >
+            <Volume2 className="w-4 h-4 shrink-0" />
+            <span>Escuchar Resumen de Caja</span>
+          </button>
+        )}
+
+        {/* Sub-pestañas Limpias */}
         <div
           role="tablist"
-          aria-label="Vistas de Caja y Estadísticas"
-          className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1"
+          aria-label="Vistas de Finanzas, Gastos y Balance"
+          className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100"
         >
           <button
             type="button"
             role="tab"
             aria-selected={billingSection === 'recibos'}
             onClick={() => setBillingSection('recibos')}
-            className={`min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+            className={`min-h-[34px] px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-1.5 cursor-pointer ${
               billingSection === 'recibos'
-                ? 'bg-[#0B2219] text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
             }`}
           >
-            <FileText className="w-4 h-4" />
-            <span>1. Recibos y Cobros ({filteredInvoices.length})</span>
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            <span>Recibos y Cobros ({filteredInvoices.length})</span>
           </button>
 
           <button
@@ -1419,14 +1516,14 @@ export function BillingView({
             role="tab"
             aria-selected={billingSection === 'gastos'}
             onClick={() => setBillingSection('gastos')}
-            className={`min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+            className={`min-h-[34px] px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-1.5 cursor-pointer ${
               billingSection === 'gastos'
-                ? 'bg-[#0B2219] text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Fuel className="w-4 h-4" />
-            <span>2. Gastos de Caja ({filteredExpenses.length})</span>
+            <Fuel className="w-3.5 h-3.5 shrink-0" />
+            <span>Gastos Operativos ({filteredExpenses.length})</span>
           </button>
 
           <button
@@ -1434,39 +1531,33 @@ export function BillingView({
             role="tab"
             aria-selected={billingSection === 'estadisticas'}
             onClick={() => setBillingSection('estadisticas')}
-            className={`min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+            className={`min-h-[34px] px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-1.5 cursor-pointer ${
               billingSection === 'estadisticas'
-                ? 'bg-[#0B2219] text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
             }`}
           >
-            <BarChart3 className="w-4 h-4" />
-            <span>3. Estadísticas por Mes y Zona</span>
+            <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+            <span>Balance Mensual</span>
           </button>
         </div>
       </div>
 
       {/* VISTA 1: RECIBOS Y COBROS EMITIDOS */}
       {billingSection === 'recibos' && (
-        <div className="surface-card rounded-2xl overflow-hidden">
-          <div className="p-4 sm:p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Comprobantes y Cobros ({visibleInvoices.length} de{' '}
-                {filteredInvoices.length})
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Toca «Editar» para corregir cualquier monto o fecha, o toca el nombre del cliente para ver sus cobros anteriores.
-              </p>
-            </div>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <h3 className="text-sm font-bold text-slate-900">
+              Comprobantes Emitidos ({visibleInvoices.length})
+            </h3>
 
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
-                placeholder="Buscar cliente, calle o recibo..."
+                placeholder="Buscar cliente o recibo..."
                 value={invoiceSearchQuery}
                 onChange={(e) => setInvoiceSearchQuery(e.target.value)}
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-xl bg-white"
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50/70 focus:bg-white focus:outline-none"
               />
               <select
                 aria-label="Filtrar comprobantes por estado"
@@ -1476,27 +1567,22 @@ export function BillingView({
                     e.target.value as 'todos' | 'Pagado' | 'Pendiente'
                   )
                 }
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-xl bg-white text-slate-700 font-semibold"
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50/70 text-slate-700 font-semibold"
               >
-                <option value="todos">Todos los estados</option>
-                <option value="Pagado">Solo Pagados</option>
-                <option value="Pendiente">Solo Pendientes</option>
+                <option value="todos">Todos</option>
+                <option value="Pagado">Pagados</option>
+                <option value="Pendiente">Pendientes</option>
               </select>
             </div>
           </div>
 
           {visibleInvoices.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-500">
-              No hay recibos emitidos con ese filtro dentro del período seleccionado ({periodLabel}).
+              No hay recibos emitidos con ese filtro dentro del período ({periodLabel}).
             </div>
           ) : (
-            <div className="divide-y divide-slate-200">
+            <div className="divide-y divide-slate-100">
               {visibleInvoices.map((inv) => {
-                const cleanPhone = inv.phone.replace(/[^0-9]/g, '');
-                const reminderMsg = `Hola ${inv.clientName}! Te recuerdo el saldo pendiente de $${inv.amount.toLocaleString('es-AR')} por el corte de pasto en ${inv.address} (${inv.date}). ¡Muchas gracias!`;
-                const reminderUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-                  reminderMsg
-                )}`;
                 const matchingProp = properties.find(
                   (p) => p.id === inv.propertyId
                 );
@@ -1504,106 +1590,79 @@ export function BillingView({
                 return (
                   <div
                     key={inv.id}
-                    className="p-4 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
+                    className="p-3.5 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:bg-slate-50/70 transition-colors"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-xs font-semibold text-slate-500">
+                        <span className="font-mono text-xs font-semibold text-slate-400">
                           {inv.invoiceNumber}
                         </span>
-                        <span className="text-slate-300">·</span>
                         {matchingProp ? (
                           <button
                             type="button"
                             onClick={() => onViewClientHistory(matchingProp)}
-                            className="font-bold text-sm text-slate-900 hover:text-emerald-700 hover:underline inline-flex items-center gap-1"
+                            className="font-semibold text-sm text-slate-900 hover:text-emerald-700 hover:underline cursor-pointer"
                           >
-                            <span>{inv.clientName}</span>
-                            <History className="w-3.5 h-3.5 text-emerald-700" />
+                            {inv.clientName}
                           </button>
                         ) : (
                           <span className="font-semibold text-sm text-slate-900">
                             {inv.clientName}
                           </span>
                         )}
-                        <span className="text-slate-300">·</span>
                         <span
-                          className={`text-xs font-semibold ${
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
                             inv.status === 'Pagado'
-                              ? 'text-emerald-700'
-                              : 'text-amber-700'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
+                              : 'bg-amber-50 text-amber-800 border border-amber-200/80'
                           }`}
                         >
                           {inv.status}
-                          {inv.paymentMethod ? ` (${inv.paymentMethod})` : ''}
+                          {inv.paymentMethod ? ` · ${inv.paymentMethod}` : ''}
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1.5 break-words">
-                        <span>
-                          {inv.address} · {inv.neighborhood || 'Zona Centro'} ·{' '}
-                          {inv.propertyType} ({inv.areaSqm} m²) · Fecha:{' '}
-                          <span className="font-mono">{inv.date}</span>
-                        </span>
-                        {inv.actualDurationMinutes && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[11px] font-mono font-semibold">
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span>{inv.actualDurationMinutes} min</span>
-                          </span>
-                        )}
+                      <div className="text-xs text-slate-500 mt-0.5 truncate">
+                        {inv.address} · {inv.neighborhood || 'Zona Centro'} ·{' '}
+                        <span className="font-mono">{inv.date}</span>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2">
-                      <div className="text-right font-mono font-bold text-base text-slate-900 tabular-nums mr-1">
+                    <div className="flex flex-wrap items-center justify-between sm:justify-end gap-1.5 shrink-0">
+                      <div className="text-right font-mono font-bold text-sm text-slate-900 tabular-nums mr-2">
                         ${inv.amount.toLocaleString('es-AR')}
                       </div>
 
                       <button
                         type="button"
                         onClick={() => onToggleInvoicePaid(inv.id)}
-                        className={`min-h-[36px] px-2.5 py-1.5 text-xs font-semibold rounded-xl border transition-colors whitespace-nowrap ${
+                        className={`min-h-[30px] px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap cursor-pointer ${
                           inv.status === 'Pendiente'
-                            ? 'bg-emerald-700 text-white border-emerald-700 hover:bg-emerald-800'
-                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        {inv.status === 'Pendiente'
-                          ? 'Marcar Cobrado'
-                          : 'Pasar a Pendiente'}
+                        {inv.status === 'Pendiente' ? 'Marcar Cobrado' : 'Pendiente'}
                       </button>
-
-                      {inv.status === 'Pendiente' && (
-                        <a
-                          href={reminderUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 whitespace-nowrap"
-                        >
-                          <MessageCircle className="w-3.5 h-3.5" />
-                          <span>Recordar Pago</span>
-                        </a>
-                      )}
 
                       <button
                         type="button"
                         onClick={() => onSelectInvoiceReceipt(inv)}
-                        className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 whitespace-nowrap"
+                        className="min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 whitespace-nowrap cursor-pointer"
                       >
                         <FileText className="w-3.5 h-3.5" />
-                        <span>Recibo / Imprimir</span>
+                        <span>Recibo</span>
                       </button>
 
                       {onEditInvoice && (
                         <button
                           type="button"
                           onClick={() => onEditInvoice(inv)}
-                          title="Editar monto, fecha o datos del recibo"
+                          title="Editar recibo"
                           aria-label={`Editar recibo ${inv.invoiceNumber}`}
-                          className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 whitespace-nowrap"
+                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
                         >
                           <Pencil className="w-3.5 h-3.5" />
-                          <span>Editar</span>
                         </button>
                       )}
 
@@ -1612,9 +1671,9 @@ export function BillingView({
                         onClick={() => onDeleteInvoice(inv.id)}
                         title="Eliminar recibo"
                         aria-label={`Eliminar recibo ${inv.invoiceNumber}`}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -1625,69 +1684,65 @@ export function BillingView({
         </div>
       )}
 
-      {/* VISTA 2: GASTOS OPERATIVOS (NAFTA, TANZA, REPUESTOS, JORNAL) */}
+      {/* VISTA 2: GASTOS OPERATIVOS */}
       {billingSection === 'gastos' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-7 surface-card rounded-2xl p-4 sm:p-5 space-y-4">
-            <div className="border-b border-slate-200 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Registrar o Editar Gasto Operativo
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-2xs">
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900">
+                Registrar Gasto Operativo
               </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Anota nafta, aceite 2T, tanza o repuestos para calcular tu ganancia limpia real.
-              </p>
             </div>
 
             <form onSubmit={handleAddExpenseSubmit} className="space-y-3">
               {editingExpenseId && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-xs font-semibold text-emerald-900">
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs font-semibold text-emerald-900">
                   <span>Editando gasto seleccionado</span>
                   <button
                     type="button"
                     onClick={handleCancelEditExpense}
                     className="text-emerald-800 underline font-bold"
                   >
-                    Cancelar edición
+                    Cancelar
                   </button>
                 </div>
               )}
-              <div>
-                <label
-                  htmlFor="expense-category"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Rubro del Gasto
-                </label>
-                <select
-                  id="expense-category"
-                  value={category}
-                  onChange={(e) =>
-                    setCategory(
-                      e.target.value as OperationalExpense['category']
-                    )
-                  }
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white"
-                >
-                  <option value="Combustible y Aceite 2T">
-                    Combustible y Aceite 2T
-                  </option>
-                  <option value="Tanza y Cuchillas">
-                    Tanza, Carreteles y Cuchillas
-                  </option>
-                  <option value="Mantenimiento Equipos">
-                    Mantenimiento / Bujías / Filtros
-                  </option>
-                  <option value="Ayudante / Jornal">
-                    Pago a Ayudante / Jornal
-                  </option>
-                  <option value="Traslado / Peajes">
-                    Gasoil Camioneta / Viajes a Pueblos
-                  </option>
-                </select>
-              </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                <div className="sm:col-span-5">
+                <div className="sm:col-span-4">
+                  <label
+                    htmlFor="expense-category"
+                    className="block text-xs font-semibold text-slate-700 mb-1"
+                  >
+                    Rubro
+                  </label>
+                  <select
+                    id="expense-category"
+                    value={category}
+                    onChange={(e) =>
+                      setCategory(
+                        e.target.value as OperationalExpense['category']
+                      )
+                    }
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50/70"
+                  >
+                    <option value="Combustible y Aceite 2T">
+                      Combustible y Aceite 2T
+                    </option>
+                    <option value="Tanza y Cuchillas">
+                      Tanza y Cuchillas
+                    </option>
+                    <option value="Mantenimiento Equipos">
+                      Mantenimiento Equipos
+                    </option>
+                    <option value="Ayudante / Jornal">
+                      Ayudante / Jornal
+                    </option>
+                    <option value="Traslado / Peajes">
+                      Traslado / Peajes
+                    </option>
+                  </select>
+                </div>
+                <div className="sm:col-span-4">
                   <label
                     htmlFor="expense-desc"
                     className="block text-xs font-semibold text-slate-700 mb-1"
@@ -1697,13 +1752,13 @@ export function BillingView({
                   <input
                     id="expense-desc"
                     type="text"
-                    placeholder="Ej. 10L Nafta YPF + Aceite 2T"
+                    placeholder="Ej. 10L Nafta + Aceite"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg"
                   />
                 </div>
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-2">
                   <label
                     htmlFor="expense-amount"
                     className="block text-xs font-semibold text-slate-700 mb-1"
@@ -1716,10 +1771,10 @@ export function BillingView({
                     placeholder="16500"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl font-mono tabular-nums"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono tabular-nums"
                   />
                 </div>
-                <div className="sm:col-span-4">
+                <div className="sm:col-span-2">
                   <label
                     htmlFor="expense-date"
                     className="block text-xs font-semibold text-slate-700 mb-1"
@@ -1731,45 +1786,34 @@ export function BillingView({
                     type="date"
                     value={expenseDate}
                     onChange={(e) => setExpenseDate(e.target.value)}
-                    className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-xl font-mono tabular-nums"
+                    className="w-full px-2 py-2 text-xs border border-slate-200 rounded-lg font-mono tabular-nums"
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                className={`min-h-[42px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white rounded-xl transition-colors ${
-                  editingExpenseId
-                    ? 'bg-emerald-700 hover:bg-emerald-800'
-                    : 'bg-[#0B2219] hover:bg-emerald-950'
-                }`}
+                className="min-h-[38px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white rounded-lg transition-colors cursor-pointer bg-slate-900 hover:bg-slate-800"
               >
                 <Fuel className="w-3.5 h-3.5" />
                 <span>
-                  {editingExpenseId
-                    ? 'Guardar Cambios del Gasto'
-                    : 'Registrar Gasto Operativo'}
+                  {editingExpenseId ? 'Guardar Cambios' : 'Registrar Gasto'}
                 </span>
               </button>
             </form>
 
-            <div className="divide-y divide-slate-200 pt-2">
+            <div className="divide-y divide-slate-100 pt-2">
               {filteredExpenses.map((exp) => (
                 <div
                   key={exp.id}
-                  className={`py-3 flex items-center justify-between gap-2 text-xs ${
-                    editingExpenseId === exp.id
-                      ? 'bg-emerald-50/70 px-2.5 rounded-xl'
-                      : ''
-                  }`}
+                  className="py-2.5 flex items-center justify-between gap-2 text-xs"
                 >
                   <div>
                     <div className="font-semibold text-slate-900">
                       {exp.description}
                     </div>
-                    <div className="text-slate-500 mt-0.5">
-                      {exp.category} ·{' '}
-                      <span className="font-mono">{exp.date}</span>
+                    <div className="text-slate-500">
+                      {exp.category} · <span className="font-mono">{exp.date}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -1781,10 +1825,9 @@ export function BillingView({
                       onClick={() => handleStartEditExpense(exp)}
                       title="Editar gasto"
                       aria-label={`Editar gasto ${exp.description}`}
-                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg"
+                      className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
                     >
-                      <Pencil className="w-3 h-3" />
-                      <span>Editar</span>
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
@@ -1801,30 +1844,27 @@ export function BillingView({
             </div>
           </div>
 
-          <div className="lg:col-span-5 surface-card rounded-2xl p-4 sm:p-5 space-y-3 h-fit">
-            <div className="border-b border-slate-200 pb-2.5">
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 h-fit shadow-2xs">
+            <div className="border-b border-slate-100 pb-2.5">
               <h3 className="text-sm font-bold text-slate-900">
-                Estructura de Gastos por Rubro
+                Gastos por Rubro
               </h3>
-              <p className="text-xs text-slate-500">
-                Distribución acumulada de insumos, combustible y traslados
-              </p>
             </div>
 
             <div className="space-y-3 pt-1">
               {detailedAnalytics.expensesByCategory.map((cat) => (
                 <div key={cat.category} className="space-y-1">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-800">
+                    <span className="font-medium text-slate-700">
                       {cat.category}
                     </span>
                     <span className="font-mono font-bold text-slate-900 tabular-nums">
                       ${cat.amount.toLocaleString('es-AR')} ({cat.percentage}%)
                     </span>
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-emerald-600 rounded-full"
+                      className="h-full bg-slate-800 rounded-full"
                       style={{ width: `${Math.max(4, cat.percentage)}%` }}
                     />
                   </div>
@@ -1835,162 +1875,111 @@ export function BillingView({
         </div>
       )}
 
-      {/* VISTA 3: ESTADÍSTICAS MES A MES, BARRIOS/PUEBLOS Y RANKING DE CLIENTES */}
+      {/* VISTA 3: BALANCE MENSUAL */}
       {billingSection === 'estadisticas' && (
-        <div className="space-y-5">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-7 surface-card rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="border-b border-slate-200 pb-2.5">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Comparativa Mes a Mes (Evolución de Ganancias)
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Control mensual de cuánto ingresó, cuánto se gastó y cuánto quedó limpio
-                </p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 font-semibold uppercase">
-                      <th className="py-2 pr-3">Mes</th>
-                      <th className="py-2 px-2 text-right">Cortes · m²</th>
-                      <th className="py-2 px-2 text-right">Facturado</th>
-                      <th className="py-2 px-2 text-right">Gastos</th>
-                      <th className="py-2 pl-2 text-right">Ganancia Limpia</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
-                    {detailedAnalytics.monthlyBreakdown.map((m) => (
-                      <tr key={m.monthKey} className="hover:bg-slate-50">
-                        <td className="py-2.5 pr-3 font-sans font-semibold text-slate-900">
-                          {m.monthLabel}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-slate-600">
-                          {m.cutsCount} ({m.totalSqm} m²)
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-semibold text-slate-900">
-                          ${m.facturado.toLocaleString('es-AR')}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-red-700">
-                          -${m.gastos.toLocaleString('es-AR')}
-                        </td>
-                        <td className="py-2.5 pl-2 text-right font-bold text-emerald-700">
-                          ${m.gananciaNeta.toLocaleString('es-AR')}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="lg:col-span-5 surface-card rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="border-b border-slate-200 pb-2.5">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Ingresos por Barrio, Zona y Localidad
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Rentabilidad comparativa por zona de cobertura operativa
-                </p>
-              </div>
-
-              <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                {detailedAnalytics.localityBreakdown.map((loc) => (
-                  <div
-                    key={loc.locality}
-                    className="flex items-center justify-between text-xs p-2.5 bg-slate-50 rounded-xl border border-slate-200/80"
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-900 flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                        <span>{loc.locality}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                        {loc.cutsCount} cortes ·{' '}
-                        {loc.totalSqm.toLocaleString('es-AR')} m² trabajados
-                      </div>
-                    </div>
-                    <div className="font-mono font-bold text-sm text-slate-900 tabular-nums">
-                      ${loc.totalBilled.toLocaleString('es-AR')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="surface-card rounded-2xl p-4 sm:p-5 space-y-3">
-            <div className="border-b border-slate-200 pb-2.5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-2xs">
+            <div className="border-b border-slate-100 pb-2.5">
               <h3 className="text-sm font-bold text-slate-900">
-                Ranking de Clientes e Historial de Tarifas Cobradas
+                Evolución Mensual de Ganancias
               </h3>
-              <p className="text-xs text-slate-500">
-                Compara cuánto le cobraste la última vez vs. la visita anterior a cada cliente
-              </p>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200 text-slate-500 font-semibold uppercase">
-                    <th className="py-2 pr-2">Cliente</th>
-                    <th className="py-2 px-2 text-right">Cortes</th>
-                    <th className="py-2 px-2 text-right">Cobro Anterior</th>
-                    <th className="py-2 px-2 text-right">Último Cobro</th>
-                    <th className="py-2 pl-2 text-right">Total Facturado</th>
+                  <tr className="border-b border-slate-200 text-slate-400 font-semibold uppercase text-[10px]">
+                    <th className="py-2 pr-3">Mes</th>
+                    <th className="py-2 px-2 text-right">Servicios</th>
+                    <th className="py-2 px-2 text-right">Facturado</th>
+                    <th className="py-2 px-2 text-right">Gastos</th>
+                    <th className="py-2 pl-2 text-right">Ganancia Neta</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
-                  {detailedAnalytics.clientRanking.slice(0, 8).map((item) => {
-                    const matchingProp = properties.find(
-                      (p) => p.id === item.propertyId
-                    );
-                    const history = getClientPriceHistory(
-                      item.propertyId,
-                      item.clientName,
-                      invoices
-                    );
-                    return (
-                      <tr key={item.propertyId} className="hover:bg-slate-50">
-                        <td className="py-2.5 pr-2 font-sans">
-                          {matchingProp ? (
-                            <button
-                              type="button"
-                              onClick={() => onViewClientHistory(matchingProp)}
-                              className="font-semibold text-slate-900 hover:text-emerald-700 hover:underline text-left"
-                            >
-                              {item.clientName}
-                            </button>
-                          ) : (
-                            <span className="font-semibold text-slate-900">
-                              {item.clientName}
-                            </span>
-                          )}
-                          <div className="text-[11px] text-slate-500">
-                            {item.locality}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-slate-600">
-                          {item.cutsCount}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-slate-500">
-                          {history.previousAmount
-                            ? `$${history.previousAmount.toLocaleString('es-AR')}`
-                            : '—'}
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-semibold text-emerald-700">
-                          ${item.lastAmount.toLocaleString('es-AR')}
-                        </td>
-                        <td className="py-2.5 pl-2 text-right font-bold text-slate-900">
-                          ${item.totalBilled.toLocaleString('es-AR')}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {detailedAnalytics.monthlyBreakdown.map((m) => (
+                    <tr key={m.monthKey} className="hover:bg-slate-50">
+                      <td className="py-2.5 pr-3 font-sans font-semibold text-slate-900">
+                        {m.monthLabel}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-slate-500">
+                        {m.cutsCount}
+                      </td>
+                      <td className="py-2.5 px-2 text-right font-semibold text-slate-900">
+                        ${m.facturado.toLocaleString('es-AR')}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-slate-500">
+                        -${m.gastos.toLocaleString('es-AR')}
+                      </td>
+                      <td className="py-2.5 pl-2 text-right font-bold text-emerald-700">
+                        ${m.gananciaNeta.toLocaleString('es-AR')}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-2xs">
+            <div className="border-b border-slate-100 pb-2.5">
+              <h3 className="text-sm font-bold text-slate-900">
+                Facturación por Zona
+              </h3>
+            </div>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {detailedAnalytics.localityBreakdown.map((loc) => (
+                <div
+                  key={loc.locality}
+                  className="flex items-center justify-between text-xs p-2.5 bg-slate-50 rounded-lg border border-slate-200/80"
+                >
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {loc.locality}
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      {loc.cutsCount} servicios
+                    </div>
+                  </div>
+                  <div className="font-mono font-bold text-sm text-slate-900 tabular-nums">
+                    ${loc.totalBilled.toLocaleString('es-AR')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VISOR LIGHTBOX DE EVIDENCIA FOTOGRÁFICA EN FACTURACIÓN */}
+      {lightboxPhoto && (
+        <div
+          data-testid="billing-photo-lightbox"
+          className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Vista ampliada de evidencia fotográfica"
+        >
+          <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-2xl w-full p-4 space-y-3 text-white shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2.5">
+              <span className="font-bold text-sm">
+                {lightboxPhoto.clientName} · {lightboxPhoto.address}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLightboxPhoto(null)}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+                aria-label="Cerrar vista ampliada"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <img
+              src={lightboxPhoto.url}
+              alt={lightboxPhoto.caption || 'Foto del lote'}
+              className="w-full max-h-[65vh] object-contain rounded-xl bg-black"
+            />
           </div>
         </div>
       )}
@@ -2112,263 +2101,21 @@ export function BackupAndEquipmentView({
   };
 
   return (
-    <div className="space-y-6">
-      {/* CONEXIÓN DIRECTA CON GOOGLE SHEETS (SIN DESCARGAR ARCHIVOS) */}
-      <div className="bg-white border border-emerald-300 rounded-xl p-5 space-y-4 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+    <div className="space-y-5">
+      {/* 1. Control de Maquinaria (Principal) */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-2xs">
+        <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
-              <h2 className="text-base font-bold text-slate-900">
-                Sincronización Directa con Google Sheets (En la Nube)
-              </h2>
-            </div>
-            <p className="text-xs text-slate-600 mt-0.5">
-              Conecta tu cuenta de Google para crear y actualizar tu hoja de cálculo automáticamente sin tener que descargar ni subir archivos cada vez.
+            <h2 className="font-display text-base font-bold text-slate-900">
+              Control de Maquinaria y Service ({equipment.length})
+            </h2>
+            <p className="text-xs text-slate-500">
+              Registrá horas de uso para controlar afilado de cuchillas, filtros y cambios de aceite.
             </p>
           </div>
-
-          {googleUserEmail ? (
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-mono text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
-                Conectado: {googleUserEmail}
-              </span>
-              <button
-                type="button"
-                onClick={onGoogleLogout}
-                title="Desconectar cuenta de Google"
-                className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Salir</span>
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={onGoogleLogin}
-              className="min-h-[42px] inline-flex items-center gap-2.5 px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs text-xs font-semibold text-slate-800 transition-colors shrink-0"
-            >
-              <svg
-                version="1.1"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 48 48"
-                className="w-4 h-4 block"
-              >
-                <path
-                  fill="#EA4335"
-                  d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                />
-                <path
-                  fill="#4285F4"
-                  d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                />
-              </svg>
-              <span>Sign in with Google (Conectar Google Sheets)</span>
-            </button>
-          )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-          <div className="lg:col-span-7 space-y-2">
-            <label
-              htmlFor="sheet-id-input"
-              className="block text-xs font-semibold text-slate-700"
-            >
-              ID o Enlace de tu Planilla de Google Sheets (se completa solo al crearla)
-            </label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                id="sheet-id-input"
-                type="text"
-                placeholder="Pega el link o ID de tu Google Sheet, o toca 'Crear Nueva Planilla'"
-                value={connectedSpreadsheetId}
-                onChange={(e) => onSetSpreadsheetIdInput(e.target.value)}
-                className="flex-1 px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              />
-              {connectedSpreadsheetUrl && (
-                <a
-                  href={connectedSpreadsheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 whitespace-nowrap"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Abrir Google Sheet</span>
-                </a>
-              )}
-            </div>
-            {lastSyncedAt && (
-              <p className="text-[11px] text-emerald-700 font-mono">
-                ✓ Última actualización en Google Sheets: {lastSyncedAt}
-              </p>
-            )}
-          </div>
-
-          <div className="lg:col-span-5 flex flex-col sm:flex-row gap-2 justify-end">
-            <button
-              type="button"
-              disabled={isSyncingSheets}
-              onClick={onRequestCreateGoogleSheet}
-              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Crear Nueva Planilla en mi Drive</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSyncingSheets || !connectedSpreadsheetId.trim()}
-              onClick={onRequestSyncGoogleSheet}
-              className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors disabled:opacity-50"
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${isSyncingSheets ? 'animate-spin' : ''}`}
-              />
-              <span>
-                {isSyncingSheets
-                  ? 'Sincronizando...'
-                  : 'Actualizar Google Sheet Ahora'}
-              </span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Opciones Adicionales: CSV, Copiar/Pegar y Pasar por WhatsApp */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <div className="border-b border-slate-200 pb-3">
-          <h3 className="text-sm font-bold text-slate-900">
-            Respaldo Offline y Transferencia por WhatsApp
-          </h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Además de Google Sheets en vivo, puedes descargar copias locales o limpiar los datos de prueba
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between space-y-3">
-            <div>
-              <div className="text-xs font-bold text-slate-900">
-                1. Descargar Excel (.CSV) o Copiar Tabla
-              </div>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                Por si prefieres abrir el archivo en Excel en la computadora o pegar las celdas manualmente.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={onExportCsv}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-100"
-              >
-                <Download className="w-4 h-4" />
-                <span>Descargar Planilla (.CSV)</span>
-              </button>
-              <button
-                type="button"
-                onClick={onCopyGoogleSheetsTsv}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-100"
-              >
-                <ClipboardCopy className="w-4 h-4" />
-                <span>Copiar Tabla al Portapapeles</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between space-y-3">
-            <div>
-              <div className="text-xs font-bold text-slate-900">
-                2. Pasar Base Completa por WhatsApp (.JSON)
-              </div>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                Descarga la copia completa con clientes, recibos, máquinas y nombre del emprendimiento.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={onExportJsonBackup}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800"
-              >
-                <Download className="w-4 h-4" />
-                <span>Guardar Copia Completa (.JSON)</span>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json,application/json"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    onImportJsonBackup(file);
-                    e.target.value = '';
-                  }
-                }}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-100"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Importar Respaldo (.JSON)</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between space-y-3">
-            <div>
-              <div className="text-xs font-bold text-slate-900">
-                3. Empezar de Cero o Restaurar Demo
-              </div>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                Limpia los datos de demostración de Venado Tuerto cuando quieran empezar a cargar solo sus clientes reales.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={onRequestClearAllData}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Vaciar Datos de Ejemplo (Dejar en 0)</span>
-              </button>
-              <button
-                type="button"
-                onClick={onRestoreDemoData}
-                className="min-h-[40px] w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Restaurar Datos de Demostración</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Estado de Maquinaria (100% Editable) */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <div className="border-b border-slate-200 pb-3">
-          <h2 className="text-base font-bold text-slate-900">
-            Control de Desgaste de Máquinas (Afilado de Cuchillas y Service)
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Registra horas de uso o toca &ldquo;Editar&rdquo; en cualquier máquina para ajustar su nombre, modelo, horas actuales o próximo mantenimiento
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
           {equipment.map((item) => {
             const ratio = Math.min(
               100,
@@ -2380,28 +2127,23 @@ export function BackupAndEquipmentView({
             return (
               <div
                 key={item.id}
-                className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between space-y-3"
+                className="border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between space-y-3 bg-slate-50/40"
               >
                 {isEditingThis ? (
-                  <div className="space-y-2.5 text-xs">
-                    <div className="font-bold text-emerald-800">
+                  <div className="space-y-2 text-xs">
+                    <div className="font-bold text-slate-900">
                       Editar Máquina
                     </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-600 mb-0.5">
-                        Nombre de la máquina
-                      </label>
-                      <input
-                        type="text"
-                        aria-label="Editar nombre de máquina"
-                        value={editEqName}
-                        onChange={(e) => setEditEqName(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      aria-label="Editar nombre de máquina"
+                      value={editEqName}
+                      onChange={(e) => setEditEqName(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
+                    />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
+                        <label className="block text-[10px] text-slate-500">
                           Horas uso
                         </label>
                         <input
@@ -2411,12 +2153,12 @@ export function BackupAndEquipmentView({
                           aria-label="Editar horas usadas"
                           value={editEqHours}
                           onChange={(e) => setEditEqHours(e.target.value)}
-                          className="w-full px-2 py-1.5 border border-slate-300 rounded-lg font-mono text-xs"
+                          className="w-full px-2 py-1 border border-slate-300 rounded-lg font-mono text-xs bg-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
-                          Límite service (h)
+                        <label className="block text-[10px] text-slate-500">
+                          Límite (h)
                         </label>
                         <input
                           type="number"
@@ -2424,34 +2166,29 @@ export function BackupAndEquipmentView({
                           aria-label="Editar límite de horas para service"
                           value={editEqLimit}
                           onChange={(e) => setEditEqLimit(e.target.value)}
-                          className="w-full px-2 py-1.5 border border-slate-300 rounded-lg font-mono text-xs"
+                          className="w-full px-2 py-1 border border-slate-300 rounded-lg font-mono text-xs bg-white"
                         />
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-600 mb-0.5">
-                        Próximo mantenimiento
-                      </label>
-                      <input
-                        type="text"
-                        aria-label="Editar próxima tarea de mantenimiento"
-                        value={editEqTask}
-                        onChange={(e) => setEditEqTask(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      aria-label="Editar próxima tarea de mantenimiento"
+                      value={editEqTask}
+                      onChange={(e) => setEditEqTask(e.target.value)}
+                      className="w-full px-2.5 py-1 border border-slate-300 rounded-lg text-xs bg-white"
+                    />
                     <div className="flex items-center justify-end gap-1.5 pt-1">
                       <button
                         type="button"
                         onClick={() => setEditingEquipmentId(null)}
-                        className="px-2.5 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg"
+                        className="px-2.5 py-1 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg"
                       >
                         Cancelar
                       </button>
                       <button
                         type="button"
                         onClick={() => handleSaveEditEquipment(item)}
-                        className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800"
+                        className="px-3 py-1 text-xs font-bold text-white bg-slate-900 rounded-lg"
                       >
                         Guardar
                       </button>
@@ -2461,21 +2198,21 @@ export function BackupAndEquipmentView({
                   <>
                     <div>
                       <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-sm text-slate-900">
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm text-slate-900 truncate">
                             {item.name}
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {item.type} · {item.model}
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {item.type}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5 shrink-0">
                           <button
                             type="button"
                             onClick={() => handleStartEditEquipment(item)}
                             title="Editar máquina"
                             aria-label={`Editar máquina ${item.name}`}
-                            className="p-1 text-slate-500 hover:text-emerald-700 rounded"
+                            className="p-1 text-slate-400 hover:text-slate-700 rounded"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
@@ -2493,7 +2230,7 @@ export function BackupAndEquipmentView({
 
                       <div className="mt-3">
                         <div className="flex justify-between text-xs font-mono mb-1">
-                          <span className="text-slate-600">Uso actual:</span>
+                          <span className="text-slate-500">Uso:</span>
                           <span
                             className={`font-bold ${
                               needsService ? 'text-amber-700' : 'text-slate-900'
@@ -2502,7 +2239,7 @@ export function BackupAndEquipmentView({
                             {item.hoursUsed}h / {item.serviceLimitHours}h
                           </span>
                         </div>
-                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className={`h-full transition-all ${
                               needsService ? 'bg-amber-600' : 'bg-emerald-600'
@@ -2512,26 +2249,23 @@ export function BackupAndEquipmentView({
                         </div>
                       </div>
 
-                      <div className="mt-2.5 text-xs text-slate-600">
-                        <span className="font-semibold text-slate-800">
-                          Próximo service:
-                        </span>{' '}
+                      <div className="mt-2 text-[11px] text-slate-500 line-clamp-2">
                         {item.nextTask}
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
                       <button
                         type="button"
                         onClick={() => onLogEquipmentHours(item.id, 1)}
-                        className="min-h-[36px] px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 whitespace-nowrap"
+                        className="min-h-[30px] px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 whitespace-nowrap cursor-pointer"
                       >
                         +1h Uso
                       </button>
                       <button
                         type="button"
                         onClick={() => onResetEquipmentService(item.id)}
-                        className="min-h-[36px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 whitespace-nowrap"
+                        className="min-h-[30px] inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 whitespace-nowrap cursor-pointer"
                       >
                         <RefreshCw className="w-3 h-3" />
                         <span>Service (0h)</span>
@@ -2546,18 +2280,18 @@ export function BackupAndEquipmentView({
 
         <form
           onSubmit={handleCreateMachine}
-          className="pt-3 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-5 gap-2.5 items-end"
+          className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-5 gap-2.5 items-end"
         >
           <div className="sm:col-span-2">
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-              Agregar Máquina / Herramienta
+              Nueva Máquina
             </label>
             <input
               type="text"
               placeholder="Ej. Motoguadaña Echo SRM-4605"
               value={newMachineName}
               onChange={(e) => setNewMachineName(e.target.value)}
-              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
             />
           </div>
           <div>
@@ -2569,7 +2303,7 @@ export function BackupAndEquipmentView({
               onChange={(e) =>
                 setNewMachineType(e.target.value as EquipmentItem['type'])
               }
-              className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg bg-white"
+              className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"
             >
               <option value="Desmalezadora / Bordeadora">Desmalezadora</option>
               <option value="Cortadora Autopropulsada">Cortadora Empuje</option>
@@ -2587,18 +2321,179 @@ export function BackupAndEquipmentView({
               max={200}
               value={newMachineLimit}
               onChange={(e) => setNewMachineLimit(e.target.value)}
-              className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+              className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg font-mono"
             />
           </div>
           <button
             type="submit"
-            className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800"
+            className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Sumar Máquina</span>
           </button>
         </form>
       </div>
+
+      {/* 2. Sincronización Nube y Copias de Seguridad en 2 Columnas Limpias */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs flex flex-col justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Sincronización con Google Sheets
+                </h3>
+              </div>
+              {googleUserEmail ? (
+                <button
+                  type="button"
+                  onClick={onGoogleLogout}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                >
+                  Desconectar ({googleUserEmail})
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onGoogleLogin}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  Conectar Google
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              Exportá y actualizá clientes, cobros y gastos en tu planilla de Google Drive.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <input
+                id="sheet-id-input"
+                type="text"
+                placeholder="ID o URL de Google Sheet"
+                value={connectedSpreadsheetId}
+                onChange={(e) => onSetSpreadsheetIdInput(e.target.value)}
+                className="flex-1 px-3 py-1.5 text-xs font-mono border border-slate-200 rounded-lg"
+              />
+              {connectedSpreadsheetUrl && (
+                <a
+                  href={connectedSpreadsheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Abrir</span>
+                </a>
+              )}
+            </div>
+            {lastSyncedAt && (
+              <p className="text-[11px] text-emerald-700 font-mono">
+                ✓ Sincronizado: {lastSyncedAt}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              disabled={isSyncingSheets}
+              onClick={onRequestCreateGoogleSheet}
+              className="min-h-[34px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-50 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Crear Planilla</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSyncingSheets || !connectedSpreadsheetId.trim()}
+              onClick={onRequestSyncGoogleSheet}
+              className="min-h-[34px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`}
+              />
+              <span>{isSyncingSheets ? 'Sincronizando...' : 'Actualizar Hoja'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              Respaldo Local (.CSV / .JSON) y Datos de Prueba
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Descargá copias locales para Excel, importá un respaldo completo o reiniciá la base de datos.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onExportCsv}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Exportar .CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={onCopyGoogleSheetsTsv}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 cursor-pointer"
+            >
+              <ClipboardCopy className="w-3.5 h-3.5" />
+              <span>Copiar Tabla</span>
+            </button>
+            <button
+              type="button"
+              onClick={onExportJsonBackup}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Backup .JSON</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  onImportJsonBackup(file);
+                  e.target.value = '';
+                }
+              }}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Importar .JSON</span>
+            </button>
+            <button
+              type="button"
+              onClick={onRestoreDemoData}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restaurar Demo</span>
+            </button>
+            <button
+              type="button"
+              onClick={onRequestClearAllData}
+              className="min-h-[34px] inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Vaciar Datos</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
+

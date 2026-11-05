@@ -91,32 +91,32 @@ export const PWAInstallButton: React.FC = () => {
             setShowGuide(true);
           }
         }}
-        className="min-h-[34px] inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-100 bg-emerald-900/90 border border-emerald-700 rounded-lg hover:bg-emerald-800 transition-colors whitespace-nowrap shrink-0"
+        className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-zinc-950 border border-zinc-900 rounded-xl hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
       >
-        <Download className="w-3.5 h-3.5 text-emerald-300" />
-        <span>{isIOS ? 'Instalar en iPhone' : 'Instalar App Offline'}</span>
+        <Download className="w-3.5 h-3.5 text-blue-400" />
+        <span>{isIOS ? 'Instalar en iPhone' : 'Instalar App'}</span>
       </button>
 
       {showGuide && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 backdrop-blur-xs p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="pwa-install-guide-title"
         >
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-slate-900 shadow-xl border border-slate-200">
-            <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-zinc-950 shadow-xl border border-zinc-200">
+            <div className="flex items-center gap-2 text-blue-600 font-bold text-sm">
               <Smartphone className="w-4 h-4" />
               <h3 id="pwa-install-guide-title">
-                Instalar PastoPro en tu Celular
+                Instalar PastoPro en tu Dispositivo
               </h3>
             </div>
-            <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+            <p className="mt-2 text-xs text-zinc-600 leading-relaxed">
               PastoPro cuenta con <strong>Service Worker Offline</strong> activo.
               Al instalarla en tu pantalla de inicio funciona en quintas, rutas
-              y pueblos sin señal de internet:
+              y zonas sin señal de internet:
             </p>
-            <ol className="mt-3 space-y-1.5 text-xs text-slate-700 list-decimal list-inside bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <ol className="mt-3 space-y-1.5 text-xs text-zinc-700 list-decimal list-inside bg-zinc-50 p-3 rounded-xl border border-zinc-200">
               <li>
                 En <strong>Android (Chrome)</strong>: toca el menú{' '}
                 <strong>⋮</strong> arriba a la derecha y elige{' '}
@@ -132,7 +132,7 @@ export const PWAInstallButton: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowGuide(false)}
-              className="mt-4 min-h-[40px] w-full rounded-xl bg-slate-900 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+              className="mt-4 min-h-[40px] w-full rounded-xl bg-zinc-950 py-2 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
             >
               Entendido
             </button>

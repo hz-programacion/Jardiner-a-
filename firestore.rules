@@ -26,8 +26,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        request.auth.token.email == "hz.mdiego@gmail.com" &&
-        request.auth.token.email_verified == true;
+        request.auth.token.email == "hz.mdiego@gmail.com";
     }
 
     function isValidWorkspace(data, userId) {
@@ -82,18 +81,24 @@ service cloud.firestore {
 
       allow create: if isValidId(userId) && (
         isAdmin() ||
-        (isOwner(userId) && isValidWorkspace(request.resource.data, userId) && cannotSelfApproveOnCreate(request.resource.data))
+        (isOwner(userId) && cannotSelfApproveOnCreate(request.resource.data))
       );
 
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (isOwner(userId) &&
-          isValidWorkspace(request.resource.data, userId) &&
           request.resource.data.ownerUid == resource.data.ownerUid &&
           approvalFieldsUnchanged(request.resource.data, resource.data))
       );
 
       allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+    }
+
+    match /access_requests/{requestId} {
+      allow get: if isValidId(requestId) && (isAdmin() || (isAuthenticated() && resource.data.uid == request.auth.uid));
+      allow list: if isAdmin() || (isAuthenticated() && resource.data.uid == request.auth.uid);
+      allow create: if isValidId(requestId) && isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     // Default deny catch-all

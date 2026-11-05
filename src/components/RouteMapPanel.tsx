@@ -61,7 +61,7 @@ function RoutePolylineController({
         path: pathCoords,
         geodesic: true,
         strokeColor: '#059669',
-        strokeOpacity: 0.88,
+        strokeOpacity: 0.9,
         strokeWeight: 4,
         map,
       });
@@ -110,7 +110,7 @@ function RoutePolylineController({
               newPolylines.forEach((polyline: any) => {
                 polyline.setOptions({
                   strokeColor: '#059669',
-                  strokeOpacity: 0.92,
+                  strokeOpacity: 0.94,
                   strokeWeight: 5,
                 });
                 polyline.setMap(map);
@@ -211,27 +211,27 @@ export function RouteMapPanel({
       : buildGoogleMapsNavUrl(baseLocation.coordinates);
 
   return (
-    <div className="surface-card rounded-2xl overflow-hidden flex flex-col">
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col shadow-xs">
       {/* Map Header Bar with Dynamic Base Controls */}
-      <div className="px-4 py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/70">
+      <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/70 text-slate-900">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="font-display text-sm font-bold text-slate-900">
-              Mapa GPS de Recorrido
+            <h2 className="font-display text-sm sm:text-base font-bold text-slate-900">
+              Cartografía y Ruta GPS de Lotes
             </h2>
-            <span className="text-xs text-slate-400">·</span>
-            <span className="text-xs font-mono text-emerald-800 font-semibold tabular-nums">
+            <span className="text-xs text-slate-300">·</span>
+            <span className="text-xs font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold tabular-nums">
               {liveRouteStats
                 ? `${liveRouteStats.distanceKm} km (~${liveRouteStats.durationMin} min)`
                 : `${jobs.length} paradas`}
             </span>
           </div>
-          <p className="text-xs text-slate-600 mt-0.5 tabular-nums truncate">
-            Salida:{' '}
+          <p className="text-xs text-slate-500 mt-1 tabular-nums truncate">
+            Punto de salida:{' '}
             <button
               type="button"
               onClick={onOpenBaseModal}
-              className="font-semibold text-slate-900 hover:text-emerald-700 underline"
+              className="font-semibold text-slate-900 hover:text-emerald-700 underline cursor-pointer"
             >
               {baseLocation.city} ({baseLocation.address})
             </button>
@@ -244,24 +244,24 @@ export function RouteMapPanel({
             onClick={onUseCurrentGps}
             disabled={isLocatingGps}
             title="Tomar mi ubicación actual por GPS como punto de salida"
-            className="min-h-[36px] inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
+            className="min-h-[34px] inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer shadow-2xs"
           >
             <Crosshair
-              className={`w-3.5 h-3.5 text-emerald-700 ${
+              className={`w-3.5 h-3.5 text-emerald-600 ${
                 isLocatingGps ? 'animate-spin' : ''
               }`}
             />
-            <span>{isLocatingGps ? 'Ubicando...' : 'Mi GPS Actual'}</span>
+            <span>{isLocatingGps ? 'Ubicando...' : 'Mi GPS'}</span>
           </button>
 
           <a
             href={fullItineraryUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#0B2219] rounded-xl hover:bg-emerald-950 transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 shadow-2xs"
           >
             <RouteIcon className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Abrir en Google Maps</span>
+            <span>Abrir Ruta</span>
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </a>
         </div>
@@ -269,7 +269,7 @@ export function RouteMapPanel({
 
       {/* Map Canvas Container */}
       <div
-        className="relative w-full h-[380px] lg:h-[470px] bg-slate-100"
+        className="relative w-full h-[360px] lg:h-[460px] bg-slate-100 [&_.gm-style]:saturate-[0.9]"
         data-testid="google-map-container"
       >
         <APIProvider apiKey={API_KEY}>
@@ -293,26 +293,23 @@ export function RouteMapPanel({
               <button
                 type="button"
                 onClick={onOpenBaseModal}
-                className="px-2.5 py-1 rounded-lg bg-[#0F291E] text-white text-xs font-mono font-bold shadow-md border-2 border-emerald-400 flex items-center gap-1.5"
+                className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-mono font-bold shadow-md border border-white flex items-center gap-1.5"
               >
-                <Crosshair className="w-3 h-3 text-emerald-300" />
-                <span>SALIDA: {baseLocation.city.toUpperCase()}</span>
+                <Crosshair className="w-3 h-3 text-emerald-400" />
+                <span>BASE: {baseLocation.city.toUpperCase()}</span>
               </button>
             </AdvancedMarker>
 
-            {/* Numbered Stop Markers */}
+            {/* Numbered Stop Markers — Architectural Slate & Emerald Hierarchy */}
             {jobs.map((job, index) => {
               const isSelected = job.id === selectedJobId;
               const isCompleted = job.status === 'Completado';
-              const isInProgress = job.status === 'En Curso';
 
-              const bgClass = isCompleted
-                ? 'bg-emerald-700 text-white border-white'
-                : isInProgress
-                ? 'bg-amber-600 text-white border-white'
-                : isSelected
-                ? 'bg-slate-900 text-white border-emerald-400'
-                : 'bg-white text-slate-900 border-slate-900';
+              const bgClass = isSelected
+                ? 'bg-emerald-600 text-white border-white ring-2 ring-emerald-600/35'
+                : isCompleted
+                ? 'bg-white text-slate-600 border-slate-300'
+                : 'bg-slate-900 text-white border-white';
 
               return (
                 <AdvancedMarker
@@ -331,12 +328,12 @@ export function RouteMapPanel({
                       setInfoWindowJobId(job.id);
                     }}
                     aria-label={`Parada ${index + 1}: ${job.clientName}`}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border-2 shadow-md font-mono text-xs font-semibold transition-transform ${
-                      isSelected ? 'scale-110' : 'hover:scale-105'
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border shadow-md font-mono text-xs font-semibold transition-transform ${
+                      isSelected ? 'scale-105' : 'hover:scale-105'
                     } ${bgClass}`}
                   >
                     <span>#{index + 1}</span>
-                    <span className="text-[11px] opacity-85">
+                    <span className="text-[11px] opacity-80">
                       {job.scheduledTime}
                     </span>
                     <span className="font-sans font-semibold max-w-[100px] truncate">
@@ -358,15 +355,14 @@ export function RouteMapPanel({
                     #{infoWindowJob.orderIndex} · {infoWindowJob.scheduledTime} hs ·{' '}
                     {infoWindowJob.propertyType} ({infoWindowJob.areaSqm} m²)
                   </div>
-                  <div className="text-sm font-bold text-slate-900 mt-0.5">
+                  <div className="text-sm font-bold text-slate-950 mt-0.5">
                     {infoWindowJob.clientName}
                   </div>
                   <div className="text-xs text-slate-600 mt-0.5">
                     {infoWindowJob.address}, {infoWindowJob.neighborhood}
                   </div>
-                  <div className="text-xs font-mono font-semibold text-emerald-800 mt-1 tabular-nums">
-                    ${infoWindowJob.price.toLocaleString('es-AR')} · ~
-                    {infoWindowJob.estimatedMinutes} min
+                  <div className="text-xs font-mono font-bold text-emerald-700 mt-1 tabular-nums">
+                    ${infoWindowJob.price.toLocaleString('es-AR')}
                   </div>
                   <div className="mt-2.5 flex items-center gap-2">
                     <a
@@ -403,14 +399,14 @@ export function RouteMapPanel({
       </div>
 
       {/* Selected Stop Quick Navigation Bar */}
-      <div className="px-4 py-3 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
+      <div className="px-4 sm:px-5 py-3.5 border-t border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
         {selectedJob ? (
           <>
             <div className="min-w-0">
               <div className="text-xs text-slate-500 font-mono tabular-nums">
                 Parada #{selectedJob.orderIndex} · {selectedJob.scheduledTime} hs ·{' '}
-                {selectedJob.propertyType} · {selectedJob.areaSqm} m² · A{' '}
-                {selectedJob.legDistanceKm || 1.8} km del punto anterior
+                {selectedJob.propertyType} ({selectedJob.areaSqm} m²) · $
+                {selectedJob.price.toLocaleString('es-AR')}
               </div>
               <div className="text-sm font-bold text-slate-900 truncate">
                 {selectedJob.clientName} — {selectedJob.address} ({selectedJob.neighborhood})
@@ -421,16 +417,16 @@ export function RouteMapPanel({
                 href={buildGoogleMapsNavUrl(selectedJob.coordinates)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 transition-colors whitespace-nowrap shrink-0"
+                className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 shadow-2xs"
               >
-                <Navigation className="w-3.5 h-3.5" />
-                <span>Navegar a esta parada</span>
+                <Navigation className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Navegar a Parada</span>
               </a>
             </div>
           </>
         ) : (
-          <div className="text-xs text-slate-500">
-            Toca cualquier parada de la lista o del mapa para ver distancia desde tu punto de partida ({baseLocation.city}) y lanzar Google Maps.
+          <div className="text-xs text-slate-600">
+            Seleccioná cualquier orden en la lista o el mapa para ver su dirección en {baseLocation.city}.
           </div>
         )}
       </div>
