@@ -9,7 +9,6 @@ import {
   CreditCard,
   KeyRound,
   Leaf,
-  Lock,
   LogIn,
   LogOut,
   Mail,
@@ -31,7 +30,6 @@ import { CityAutocomplete } from './StreetAddressAutocomplete';
 import {
   getInitialAccessApprovalState,
   isPrimaryAdminEmail,
-  PRIMARY_ADMIN_EMAIL,
 } from '../utils/saasLogic';
 import { ApprovalStatus, UserRole } from '../types/lawn';
 
@@ -132,23 +130,6 @@ export function AuthGate({
       approvalStatus: initialApproval.approvalStatus,
       photoURL: user.photoURL,
     };
-  };
-
-  const handleQuickAdminAccess = async () => {
-    const adminSession: AuthenticatedTenantSession = {
-      uid: 'admin-master-hz-mdiego',
-      email: PRIMARY_ADMIN_EMAIL,
-      displayName: 'Administrador Principal (Diego)',
-      businessName: 'Consola Central de Licencias',
-      cityPresetKey: 'Venado Tuerto, Santa Fe',
-      isNewRegistration: false,
-      role: 'admin',
-      isApproved: true,
-      approvalStatus: 'approved',
-    };
-    await onTenantAuthenticated(adminSession);
-    onAuthSuccessBanner('Sesión iniciada como Administrador Principal.');
-    if (!isFullScreenGate) onCloseModal();
   };
 
   const handleGoogleAccess = async () => {
@@ -271,15 +252,17 @@ export function AuthGate({
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
+      if (isPrimaryAdminEmail(cleanEmail)) {
+        setErrorMsg(
+          'Acceso denegado: la cuenta de Administrador Principal requiere autenticación verificada con tu contraseña real o inicio de sesión oficial con Google.'
+        );
+        return;
+      }
       if (
         code === 'auth/invalid-credential' ||
         code === 'auth/user-not-found' ||
         code === 'auth/wrong-password'
       ) {
-        if (isPrimaryAdminEmail(cleanEmail)) {
-          await handleQuickAdminAccess();
-          return;
-        }
         setErrorMsg(
           'Correo o contraseña incorrectos. Si todavía no tenés cuenta, seleccioná "Crear Cuenta".'
         );
@@ -288,24 +271,18 @@ export function AuthGate({
           'Ese correo ya está registrado. Cambiá a "Iniciar Sesión" para entrar.'
         );
       } else {
-        const initialApproval = getInitialAccessApprovalState(cleanEmail);
-        const fallbackUid = isPrimaryAdminEmail(cleanEmail)
-          ? 'admin-master-hz-mdiego'
-          : `local-${cleanEmail.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        const fallbackUid = `local-${cleanEmail.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
         const fallbackSession: AuthenticatedTenantSession = {
           uid: fallbackUid,
           email: cleanEmail,
           displayName:
-            fullName.trim() ||
-            (isPrimaryAdminEmail(cleanEmail)
-              ? 'Administrador Principal'
-              : cleanEmail.split('@')[0]),
+            fullName.trim() || businessName.trim() || cleanEmail.split('@')[0],
           businessName: businessName.trim() || undefined,
           cityPresetKey: city.trim() || 'Venado Tuerto, Santa Fe',
           isNewRegistration: mode === 'register',
-          role: initialApproval.role,
-          isApproved: initialApproval.isApproved,
-          approvalStatus: initialApproval.approvalStatus,
+          role: 'user',
+          isApproved: false,
+          approvalStatus: 'pending',
         };
         await onTenantAuthenticated(fallbackSession);
         onAuthSuccessBanner(
@@ -789,18 +766,18 @@ export function AuthGate({
             </form>
 
             {mode !== 'reset' && (
-              <div className="grid grid-cols-2 gap-2">
+              <div>
                 <button
                   type="button"
                   onClick={handleGoogleAccess}
                   disabled={isSubmitting}
-                  className="py-2 px-3 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 font-semibold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
                 >
                   <svg
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 48 48"
-                    className="w-3.5 h-3.5 shrink-0"
+                    className="w-4 h-4 shrink-0"
                     aria-hidden="true"
                   >
                     <path
@@ -820,17 +797,7 @@ export function AuthGate({
                       d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
                     />
                   </svg>
-                  <span>Google</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleQuickAdminAccess}
-                  data-testid="quick-admin-login-btn"
-                  className="py-2 px-3 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Lock className="w-3.5 h-3.5 text-slate-600 shrink-0" />
-                  <span>Acceso Admin</span>
+                  <span>Continuar con Google</span>
                 </button>
               </div>
             )}

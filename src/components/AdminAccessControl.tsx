@@ -35,6 +35,7 @@ import {
   PRIMARY_ADMIN_EMAIL,
 } from '../utils/saasLogic';
 import {
+  auth,
   listAllWorkspacesForAdmin,
   updateUserApprovalByAdmin,
   upsertLocalTenantSummary,
@@ -322,7 +323,11 @@ export function AdminControlPanelView({
   onShowToast,
   onNavigateToApp,
 }: AdminControlPanelViewProps) {
-  const isAdmin = isPrimaryAdminEmail(currentUserEmail);
+  const isAdmin = Boolean(
+    auth.currentUser &&
+      isPrimaryAdminEmail(auth.currentUser.email) &&
+      isPrimaryAdminEmail(currentUserEmail)
+  );
   const [users, setUsers] = useState<RegisteredTenantSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [processingUid, setProcessingUid] = useState<string | null>(null);

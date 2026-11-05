@@ -26,7 +26,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        request.auth.token.email == "hz.mdiego@gmail.com";
+        request.auth.token.email == "hz.mdiego@gmail.com" &&
+        request.auth.token.email_verified == true;
     }
 
     function isValidWorkspace(data, userId) {

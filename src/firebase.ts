@@ -566,6 +566,10 @@ export async function recordCloudAccessRequest(request: {
 export async function listAllWorkspacesForAdmin(): Promise<
   RegisteredTenantSummary[]
 > {
+  if (!auth.currentUser || !isPrimaryAdminEmail(auth.currentUser.email)) {
+    return [];
+  }
+
   const mergedMap = new Map<string, RegisteredTenantSummary>();
 
   for (const localItem of getLocalTenantDirectory()) {
@@ -718,6 +722,12 @@ export async function updateUserApprovalByAdmin(
   approve: boolean,
   targetEmail?: string
 ): Promise<{ ok: boolean; updatedSummary?: RegisteredTenantSummary; errorMessage?: string }> {
+  if (!auth.currentUser || !isPrimaryAdminEmail(auth.currentUser.email)) {
+    return {
+      ok: false,
+      errorMessage: 'Acceso denegado: solo el Administrador Principal autenticado puede modificar permisos.',
+    };
+  }
   if (isPrimaryAdminEmail(targetEmail)) {
     return {
       ok: false,

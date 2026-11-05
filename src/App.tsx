@@ -277,7 +277,19 @@ export default function App() {
         const raw = localStorage.getItem(ACTIVE_TENANT_SESSION_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed && parsed.uid && parsed.email) return parsed;
+          if (parsed && parsed.uid && parsed.email) {
+            // Security: Never trust a localStorage session claiming admin email or role
+            // without live Firebase Authentication verification via onAuthStateChanged.
+            if (
+              isPrimaryAdminEmail(parsed.email) ||
+              parsed.role === 'admin' ||
+              String(parsed.uid).startsWith('local-')
+            ) {
+              localStorage.removeItem(ACTIVE_TENANT_SESSION_KEY);
+              return null;
+            }
+            return parsed;
+          }
         }
       } catch {
         // ignore
@@ -308,8 +320,11 @@ export default function App() {
   // Active storage key isolated per tenant (or demo workspace)
   const activeTenantUid = activeTenantSession?.uid || firebaseUser?.uid || null;
   const activeUserEmail =
-    activeTenantSession?.email || firebaseUser?.email || null;
-  const isAdminUser = isPrimaryAdminEmail(activeUserEmail);
+    firebaseUser?.email || activeTenantSession?.email || null;
+  // Security: Admin privileges strictly require a verified live Firebase Auth user matching hz.mdiego@gmail.com
+  const isAdminUser = Boolean(
+    firebaseUser && isPrimaryAdminEmail(firebaseUser.email)
+  );
   const currentStorageKey = useMemo(
     () => getTenantStorageKey(activeTenantUid, !activeTenantUid),
     [activeTenantUid]
@@ -903,6 +918,22 @@ export default function App() {
             isNewRegistration: false,
           });
         }
+      } else {
+        // Purge any unauthenticated session claiming admin privileges
+        setActiveTenantSession((prev) => {
+          if (
+            prev &&
+            (isPrimaryAdminEmail(prev.email) || prev.role === 'admin')
+          ) {
+            try {
+              localStorage.removeItem(ACTIVE_TENANT_SESSION_KEY);
+            } catch {
+              // ignore
+            }
+            return null;
+          }
+          return prev;
+        });
       }
     });
 
@@ -2238,8 +2269,13 @@ export default function App() {
     if (localModeAccepted && !activeTenantSession && !firebaseUser) {
       return true;
     }
+    if (firebaseUser && isPrimaryAdminEmail(firebaseUser.email)) {
+      return true;
+    }
     const email = activeTenantSession?.email || firebaseUser?.email || '';
-    if (isPrimaryAdminEmail(email)) return true;
+    if (isPrimaryAdminEmail(email) && !firebaseUser) {
+      return false;
+    }
     if (activeTenantSession && typeof activeTenantSession.isApproved === 'boolean') {
       return activeTenantSession.isApproved;
     }
@@ -2314,7 +2350,11 @@ export default function App() {
         onTenantAuthenticated={async (session) => {
           await hydrateTenantWorkspace(session);
           setLocalModeAccepted(true);
-          if (isPrimaryAdminEmail(session.email)) {
+          if (
+            auth.currentUser &&
+            isPrimaryAdminEmail(auth.currentUser.email) &&
+            isPrimaryAdminEmail(session.email)
+          ) {
             setActiveTab('admin');
           }
         }}
@@ -2324,7 +2364,11 @@ export default function App() {
           setIsWhiteLabelModalOpen(true);
         }}
         onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
-        onOpenAdminPanel={() => setActiveTab('admin')}
+        onOpenAdminPanel={() => {
+          if (auth.currentUser && isPrimaryAdminEmail(auth.currentUser.email)) {
+            setActiveTab('admin');
+          }
+        }}
         onForceCloudSync={handleForceCloudSync}
         onAuthSuccessBanner={showBanner}
       />
@@ -2677,12 +2721,12 @@ export default function App() {
       </div>
 
       {/* ====================================================================
-          MAIN WORKSPACE (Calm, Uncluttered Responsive Canvas)
+          MAIN WORKSPACE (Generous Negative Space & Strategic Bento Architecture)
           ==================================================================== */}
       <div className="flex-1 min-w-0 flex flex-col">
         <main
           id="main-workspace"
-          className="flex-1 min-w-0 max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-5 space-y-5"
+          className="flex-1 min-w-0 max-w-[1540px] w-full mx-auto px-4 sm:px-8 lg:px-10 py-6 sm:py-8 space-y-8"
         >
         {routeNotice && (
           <div
@@ -2781,40 +2825,40 @@ export default function App() {
             TAB 1: HOY / MI RUTA — STREAMLINED ARCHITECTURAL WORKSPACE
             ================================================================== */}
         {activeTab === 'ruta' && (
-          <div className="space-y-4" data-testid="ruta-split-cockpit">
-            {/* 1. CLEAN SUMMARY & DISPATCH BAR (Zero Clutter) */}
+          <div className="space-y-6" data-testid="ruta-split-cockpit">
+            {/* 1. STRATEGIC BENTO SUMMARY & DISPATCH BAR (Generous Negative Space) */}
             <section
               data-testid="compact-route-telemetry-bar"
-              className="bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-2xs overflow-hidden"
+              className="bento-tile text-slate-900 rounded-2xl overflow-hidden"
             >
               {/* Top Row: 3 Focused Operational KPIs + Active Date & Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200">
+              <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-100 border-b border-slate-100">
                 {/* KPI 1: Ingresos del Día */}
-                <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                <div className="px-6 py-5 flex items-center justify-between gap-4">
                   <div>
-                    <div className="text-[11px] font-medium text-slate-500">
+                    <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-slate-400">
                       Facturación del Día
                     </div>
-                    <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums tracking-tight mt-0.5">
+                    <div className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums tracking-tight mt-1">
                       ${routeMetrics.expectedRevenueToday.toLocaleString('es-AR')}
                     </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono font-semibold">
+                  <span className="px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono font-semibold">
                     {activeDateJobs.length} paradas
                   </span>
                 </div>
 
                 {/* KPI 2: Progreso de la Jornada */}
-                <div className="px-4 py-3.5 flex flex-col justify-center">
+                <div className="px-6 py-5 flex flex-col justify-center">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-slate-500">
+                    <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-slate-400">
                       Avance de Visitas
                     </span>
                     <span className="font-mono font-bold text-slate-900 tabular-nums">
                       {routeMetrics.completedCount} de {activeDateJobs.length} listas ({completionRatio}%)
                     </span>
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-2">
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-2.5">
                     <div
                       className="h-full bg-emerald-500 transition-all duration-300"
                       style={{ width: `${completionRatio}%` }}
@@ -2823,19 +2867,19 @@ export default function App() {
                 </div>
 
                 {/* KPI 3: Recorrido y Tiempo Estimado */}
-                <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                <div className="px-6 py-5 flex items-center justify-between gap-4">
                   <div>
-                    <div className="text-[11px] font-medium text-slate-500">
+                    <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-slate-400">
                       Recorrido GPS ({baseLocation.city})
                     </div>
-                    <div className="font-display text-lg sm:text-xl font-bold text-slate-900 tabular-nums mt-0.5">
+                    <div className="font-display text-xl sm:text-2xl font-bold text-slate-900 tabular-nums mt-1">
                       {routeMetrics.totalDistanceKm} km{' '}
                       <span className="text-xs font-sans font-normal text-slate-500">
                         (~{Math.round((routeMetrics.totalWorkMinutes / 60) * 10) / 10} hs)
                       </span>
                     </div>
                   </div>
-                  <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium">
                     <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                     <span>{activeDayWeather.tempMax}°C</span>
                   </div>
@@ -2843,9 +2887,9 @@ export default function App() {
               </div>
 
               {/* Bottom Toolbar: Single Clean Row with Date Picker, Status Filter & Primary Actions */}
-              <div className="px-4 py-2.5 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="px-6 py-3.5 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
                 {/* Left: Date Selector + Status Filter */}
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <div className="inline-flex items-center bg-white rounded-xl p-0.5 border border-slate-200 shadow-2xs">
                     <button
                       type="button"
@@ -2933,7 +2977,7 @@ export default function App() {
                 </div>
 
                 {/* Right: 2 Clear Route Actions */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <button
                     type="button"
                     onClick={handleOptimizeRoute}
@@ -2992,11 +3036,11 @@ export default function App() {
             {/* ASYMMETRIC 7:5 WORKSPACE:
                 LEFT (7 COLS) = CLEAN, HIGH-DENSITY CSS GRID WORK ORDER CARDS
                 RIGHT (5 COLS) = STICKY INTERACTIVE GPS MAP */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* LEFT COLUMN: WORK ORDERS */}
               <div
                 data-testid="daily-jobs-primary-column"
-                className={`lg:col-span-7 space-y-2.5 min-w-0 ${
+                className={`lg:col-span-7 space-y-3 min-w-0 ${
                   mobileRouteSubView === 'map' ? 'hidden lg:block' : 'block'
                 }`}
               >
