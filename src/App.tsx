@@ -38,6 +38,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  Smile,
   Sparkles,
   Sun,
   Timer,
@@ -142,6 +143,7 @@ import {
   OfflineQueueAndAliasModal,
   ScheduleJobModal,
 } from './components/Modals';
+import { EasyAccessDashboard } from './components/EasyAccessDashboard';
 import {
   AuthenticatedTenantSession,
   AuthGate,
@@ -1909,6 +1911,66 @@ export default function App() {
     );
   };
 
+  const handleEasyQuickAddJob = (
+    clientName: string,
+    approxPrice: number,
+    address = 'Domicilio'
+  ) => {
+    // Look up if client already exists
+    const existing = properties.find(
+      (p) => p.clientName.toLowerCase() === clientName.toLowerCase()
+    );
+    const resolvedPropertyId = existing ? existing.id : `prop-quick-${Date.now()}`;
+    const targetDate = activeDate || TODAY_REFERENCE;
+    const targetOrder = scheduledJobs.filter((j) => j.scheduledDate === targetDate).length + 1;
+
+    if (!existing) {
+      const newProp: ClientProperty = {
+        id: resolvedPropertyId,
+        clientName,
+        phone: '',
+        address,
+        neighborhood: baseLocation.city || 'Venado Tuerto',
+        propertyType: 'Casa',
+        areaSqm: Math.max(100, Math.round(approxPrice / 65)),
+        frequency: 'Quincenal',
+        basePrice: approxPrice,
+        defaultTasks: ['Corte general y bordeado'],
+        accessNotes: '',
+        coordinates: baseLocation.coordinates,
+        lastCutDate: '',
+        nextCutDate: targetDate,
+        estimatedMinutes: 45,
+        active: true,
+      };
+      setProperties((prev) => [newProp, ...prev]);
+    }
+
+    const newJob: ScheduledJob = {
+      id: `job-quick-${Date.now()}`,
+      propertyId: resolvedPropertyId,
+      clientName,
+      phone: existing ? existing.phone : '',
+      address,
+      neighborhood: existing ? existing.neighborhood : baseLocation.city,
+      propertyType: existing ? existing.propertyType : 'Casa',
+      areaSqm: existing ? existing.areaSqm : 300,
+      frequency: existing ? existing.frequency : 'Quincenal',
+      scheduledDate: targetDate,
+      scheduledTime: '09:00',
+      orderIndex: targetOrder,
+      status: 'Pendiente',
+      tasks: ['Corte de pasto y prolijidad'],
+      price: approxPrice,
+      accessNotes: '',
+      coordinates: existing ? existing.coordinates : baseLocation.coordinates,
+      estimatedMinutes: 45,
+    };
+
+    setScheduledJobs((prev) => [...prev, newJob]);
+    showBanner(`Trabajo de "${clientName}" anotado por $${approxPrice.toLocaleString('es-AR')}.`);
+  };
+
   const handleRequestDeleteClient = (property: ClientProperty) => {
     setDeleteDialog({
       isOpen: true,
@@ -2450,6 +2512,28 @@ export default function App() {
     }
   })();
 
+  // Mode Papás / Simple: Minimalist high-contrast full dashboard replacement
+  if (isEasyAccessMode) {
+    return (
+      <EasyAccessDashboard
+        todayJobs={activeDateJobs}
+        activeDate={activeDate}
+        properties={properties}
+        onCompleteJob={handleConfirmCompleteJob}
+        onQuickAddJob={handleEasyQuickAddJob}
+        onExitEasyMode={() => {
+          setIsEasyAccessMode(false);
+          try {
+            localStorage.setItem('parquizaciones_easy_access_v1', 'false');
+          } catch {
+            // ignore
+          }
+          stopSpeakingAloud();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen architectural-grid-canvas text-slate-900 flex flex-col pb-20 md:pb-6 overflow-x-hidden">
       {/* Skip-to-Content Link */}
@@ -2553,6 +2637,17 @@ export default function App() {
               <kbd className="hidden lg:inline px-1 py-0.5 rounded bg-white border border-slate-200 text-[10px] font-mono font-semibold text-slate-500">
                 ⌘K
               </kbd>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleToggleEasyAccessMode}
+              data-testid="toggle-easy-access-mode-btn"
+              title="Modo Simple para personas con dificultades de lectura: botones gigantes, sin GPS y con voz"
+              className="min-h-[34px] inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 border-2 border-amber-500"
+            >
+              <Smile className="w-4 h-4 text-slate-950 stroke-[3] shrink-0" />
+              <span>Modo Papás</span>
             </button>
 
             <button
